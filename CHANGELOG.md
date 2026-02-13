@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.4 — Universal Fraud Intelligence
+
+### Added
+- **Universal fraud check:** Automatic fraud score check on every new order using cross-network threat intelligence
+- **Auto-block:** Orders exceeding the configured fraud threshold are automatically failed with detailed fraud signals in order notes
+- **Fraud meta data:** Score, risk level, and check timestamp stored as order meta for reporting
+- **Network effect:** Fraud scores now reflect threat data from ALL Guardify-connected sites, not just your own
+
+### Changed
+- `class-guardify-fraud-check.php` moved outside `is_admin()` gate — hooks `woocommerce_new_order` + `woocommerce_checkout_order_created` for frontend auto-check
+- Fraud threshold configured per-site via TansiqLabs Console → Guardify → Settings
+
+---
+
 ## v1.0.3 — LiteSpeed Cache compatibility & incomplete order fix
 
 ### Fixed

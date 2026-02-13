@@ -50,6 +50,10 @@ class Guardify_Fraud_Check {
         add_action('manage_shop_order_posts_custom_column', [$this, 'render_list_column_legacy'], 10, 2);
         add_filter('woocommerce_shop_order_list_table_columns', [$this, 'add_list_column'], 15);
         add_action('woocommerce_shop_order_list_table_custom_column', [$this, 'render_list_column'], 10, 2);
+
+        // Auto fraud check on new orders (universal fraud intelligence)
+        add_action('woocommerce_new_order', [$this, 'auto_fraud_check_on_new_order'], 20, 2);
+        add_action('woocommerce_checkout_order_created', [$this, 'auto_fraud_check_on_new_order'], 20, 2);
     }
 
     // ── Meta Box ──────────────────────────────────────────────────────────
@@ -143,6 +147,85 @@ class Guardify_Fraud_Check {
     }
 
     // ── API Communication ─────────────────────────────────────────────────
+
+    /**
+     * Auto fraud check when a new order is created.
+     * Calls the universal TansiqLabs fraud check API and auto-fails orders
+     * that exceed the site's configured threshold.
+     *
+     * @param int $order_id The order ID
+     * @param \WC_Order|null $order The order object
+     */
+    public function auto_fraud_check_on_new_order($order_id, $order = null): void {
+        try {
+            // Get order object if not passed
+            if (!$order || !($order instanceof \WC_Order)) {
+                $order = wc_get_order($order_id);
+            }
+            if (!$order) return;
+
+            // Skip if already checked (prevent double-check from dual hooks)
+            if ($order->get_meta('_guardify_fraud_score') !== '') return;
+
+            // Get billing phone
+            $phone = $order->get_billing_phone();
+            if (empty($phone)) return;
+
+            // Call universal fraud check API
+            $result = $this->fetch_fraud_score($phone);
+            if (!$result || empty($result['success'])) return;
+
+            $score     = intval($result['score'] ?? 0);
+            $risk      = $result['risk'] ?? 'low';
+            $threshold = intval($result['threshold'] ?? 70);
+
+            // Store fraud data as order meta
+            $order->update_meta_data('_guardify_fraud_score', $score);
+            $order->update_meta_data('_guardify_fraud_risk', $risk);
+            $order->update_meta_data('_guardify_fraud_checked_at', current_time('mysql'));
+            $order->save();
+
+            // Cache the result
+            $this->cache_result($phone, $result);
+
+            // Auto-fail if score exceeds threshold
+            if ($score >= $threshold && !in_array($order->get_status(), ['failed', 'cancelled', 'refunded'], true)) {
+                $order->update_status(
+                    'failed',
+                    sprintf(
+                        __('Guardify: Auto-blocked — Fraud score %d/100 (%s risk) exceeds threshold %d. Universal fraud intelligence detected threats across the network.', 'guardify'),
+                        $score,
+                        ucfirst($risk),
+                        $threshold
+                    )
+                );
+
+                // Add detailed note with signals
+                $signals = $result['signals'] ?? [];
+                if (!empty($signals)) {
+                    $signal_text = array_map(function ($s) {
+                        return '• ' . ($s['label'] ?? '') . ': ' . ($s['detail'] ?? '');
+                    }, $signals);
+                    $order->add_order_note(
+                        __('Guardify Fraud Signals:', 'guardify') . "\n" . implode("\n", $signal_text)
+                    );
+                }
+            } else if ($score > 0) {
+                // Add informational note for non-zero scores
+                $order->add_order_note(
+                    sprintf(
+                        __('Guardify: Fraud check complete — Score %d/100 (%s risk). Threshold: %d.', 'guardify'),
+                        $score,
+                        ucfirst($risk),
+                        $threshold
+                    )
+                );
+            }
+        } catch (\Exception $e) {
+            // Don't block order creation on fraud check failure
+            error_log('Guardify Auto Fraud Check Error: ' . $e->getMessage());
+        }
+    }
 
     private function fetch_fraud_score(string $phone): ?array {
         $api_key = get_option('guardify_site_api_key', '');

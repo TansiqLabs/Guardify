@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast courier integration, and order tracking features.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.0.3');
+define('GUARDIFY_VERSION', '1.0.4');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -235,6 +235,13 @@ function guardify_init(): void {
         Guardify_Advanced_Protection::get_instance();
     }
 
+    // Fraud Check - Universal fraud intelligence (auto-check on new orders + admin UI)
+    // Loaded outside is_admin() because woocommerce_new_order fires on frontend checkout
+    guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-fraud-check.php', 'Guardify_Fraud_Check');
+    if (class_exists('Guardify_Fraud_Check')) {
+        Guardify_Fraud_Check::get_instance();
+    }
+
     // =============================================
     // ADMIN CLASSES - Load only in admin
     // =============================================
@@ -273,12 +280,6 @@ function guardify_init(): void {
         guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-blocklist.php', 'Guardify_Blocklist');
         if (class_exists('Guardify_Blocklist')) {
             Guardify_Blocklist::get_instance();
-        }
-        
-        // Fraud Check - API-powered fraud risk assessment on order pages
-        guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-fraud-check.php', 'Guardify_Fraud_Check');
-        if (class_exists('Guardify_Fraud_Check')) {
-            Guardify_Fraud_Check::get_instance();
         }
     }
 }
