@@ -528,7 +528,169 @@ class Guardify_Settings {
                             <?php
                         }
                         ?>
-                        
+
+                        <!-- License AJAX (inline to bypass LiteSpeed/cache JS optimization) -->
+                        <script data-no-optimize="1">
+                        (function(){
+                            var ajaxurl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
+                            var nonce   = <?php echo wp_json_encode(wp_create_nonce('guardify_ajax_nonce')); ?>;
+
+                            function showLicenseNotice(msg, type) {
+                                var el = document.createElement('div');
+                                el.className = 'guardify-notice guardify-notice-' + type;
+                                el.innerHTML = '<p>' + escHtml(msg) + '</p>';
+                                var header = document.querySelector('.guardify-header');
+                                if (header && header.parentNode) {
+                                    header.parentNode.insertBefore(el, header.nextSibling);
+                                } else {
+                                    var wrap = document.querySelector('.guardify-settings-wrap');
+                                    if (wrap) wrap.prepend(el);
+                                }
+                                setTimeout(function(){ el.style.transition='opacity .3s'; el.style.opacity='0'; setTimeout(function(){ el.remove(); },350); }, 5000);
+                            }
+
+                            function escHtml(s) {
+                                var d = document.createElement('div');
+                                d.appendChild(document.createTextNode(s));
+                                return d.innerHTML;
+                            }
+
+                            /* ---- Activate ---- */
+                            var activateBtn = document.getElementById('guardify-activate-license');
+                            if (activateBtn) {
+                                activateBtn.addEventListener('click', function() {
+                                    var input = document.getElementById('guardify-api-key');
+                                    var key   = input ? input.value.trim() : '';
+                                    if (!key) { showLicenseNotice('Please enter your license key', 'error'); return; }
+
+                                    activateBtn.disabled = true;
+                                    activateBtn.innerHTML = '<span class="dashicons dashicons-update spinning"></span> Activating...';
+
+                                    var fd = new FormData();
+                                    fd.append('action', 'guardify_activate_license');
+                                    fd.append('nonce', nonce);
+                                    fd.append('api_key', key);
+
+                                    fetch(ajaxurl, { method: 'POST', credentials: 'same-origin', body: fd })
+                                        .then(function(r){ return r.json(); })
+                                        .then(function(res){
+                                            if (res.success) {
+                                                showLicenseNotice(res.data.message || 'License activated!', 'success');
+                                                if (res.data.reload) setTimeout(function(){ location.reload(); }, 1500);
+                                            } else {
+                                                showLicenseNotice(res.data.message || 'Activation failed.', 'error');
+                                                activateBtn.disabled = false;
+                                                activateBtn.innerHTML = '<span class="dashicons dashicons-yes-alt"></span> <span>Activate</span>';
+                                            }
+                                        })
+                                        .catch(function(err){
+                                            console.error('Guardify activate error:', err);
+                                            showLicenseNotice('Connection error: ' + err.message, 'error');
+                                            activateBtn.disabled = false;
+                                            activateBtn.innerHTML = '<span class="dashicons dashicons-yes-alt"></span> <span>Activate</span>';
+                                        });
+                                });
+                            }
+
+                            /* ---- Deactivate ---- */
+                            var deactivateBtn = document.getElementById('guardify-deactivate-license');
+                            if (deactivateBtn) {
+                                deactivateBtn.addEventListener('click', function() {
+                                    if (!confirm('Are you sure you want to deactivate the license from this site?')) return;
+                                    deactivateBtn.disabled = true;
+                                    deactivateBtn.textContent = 'Deactivating...';
+
+                                    var fd = new FormData();
+                                    fd.append('action', 'guardify_deactivate_license');
+                                    fd.append('nonce', nonce);
+
+                                    fetch(ajaxurl, { method: 'POST', credentials: 'same-origin', body: fd })
+                                        .then(function(r){ return r.json(); })
+                                        .then(function(res){
+                                            if (res.success) {
+                                                showLicenseNotice(res.data.message, 'success');
+                                                if (res.data.reload) setTimeout(function(){ location.reload(); }, 1000);
+                                            } else {
+                                                showLicenseNotice(res.data.message || 'Deactivation failed', 'error');
+                                                deactivateBtn.disabled = false;
+                                                deactivateBtn.textContent = 'Deactivate';
+                                            }
+                                        })
+                                        .catch(function(err){
+                                            console.error('Guardify deactivate error:', err);
+                                            showLicenseNotice('Connection error.', 'error');
+                                            deactivateBtn.disabled = false;
+                                            deactivateBtn.textContent = 'Deactivate';
+                                        });
+                                });
+                            }
+
+                            /* ---- Verify License ---- */
+                            var verifyBtn = document.getElementById('guardify-check-license');
+                            if (verifyBtn) {
+                                verifyBtn.addEventListener('click', function() {
+                                    verifyBtn.disabled = true;
+                                    verifyBtn.innerHTML = '<span class="dashicons dashicons-update spinning"></span> Verifying...';
+
+                                    var fd = new FormData();
+                                    fd.append('action', 'guardify_check_license');
+                                    fd.append('nonce', nonce);
+
+                                    fetch(ajaxurl, { method: 'POST', credentials: 'same-origin', body: fd })
+                                        .then(function(r){ return r.json(); })
+                                        .then(function(res){
+                                            if (res.success) {
+                                                showLicenseNotice(res.data.message, 'success');
+                                                setTimeout(function(){ location.reload(); }, 1500);
+                                            } else {
+                                                showLicenseNotice(res.data.message || 'Verification failed', 'error');
+                                                verifyBtn.disabled = false;
+                                                verifyBtn.innerHTML = '<span class="dashicons dashicons-update" style="font-size:16px;width:16px;height:16px;line-height:1.4;"></span> Verify License';
+                                            }
+                                        })
+                                        .catch(function(err){
+                                            console.error('Guardify verify error:', err);
+                                            showLicenseNotice('Connection error.', 'error');
+                                            verifyBtn.disabled = false;
+                                            verifyBtn.innerHTML = '<span class="dashicons dashicons-update" style="font-size:16px;width:16px;height:16px;line-height:1.4;"></span> Verify License';
+                                        });
+                                });
+                            }
+
+                            /* ---- SSO Login ---- */
+                            var ssoBtn = document.getElementById('guardify-sso-login');
+                            if (ssoBtn) {
+                                ssoBtn.addEventListener('click', function() {
+                                    ssoBtn.disabled = true;
+                                    ssoBtn.innerHTML = '<span class="dashicons dashicons-update spinning" style="font-size:18px;width:18px;height:18px;"></span> Connecting...';
+
+                                    var fd = new FormData();
+                                    fd.append('action', 'guardify_sso_login');
+                                    fd.append('nonce', nonce);
+
+                                    fetch(ajaxurl, { method: 'POST', credentials: 'same-origin', body: fd })
+                                        .then(function(r){ return r.json(); })
+                                        .then(function(res){
+                                            if (res.success && res.data.sso_url) {
+                                                window.open(res.data.sso_url, '_blank');
+                                                showLicenseNotice('Console opened in a new tab', 'success');
+                                            } else {
+                                                showLicenseNotice(res.data.message || 'SSO login failed', 'error');
+                                            }
+                                            ssoBtn.disabled = false;
+                                            ssoBtn.innerHTML = '<span class="dashicons dashicons-admin-links" style="font-size:18px;width:18px;height:18px;"></span> Open Console';
+                                        })
+                                        .catch(function(err){
+                                            console.error('Guardify SSO error:', err);
+                                            showLicenseNotice('Connection error.', 'error');
+                                            ssoBtn.disabled = false;
+                                            ssoBtn.innerHTML = '<span class="dashicons dashicons-admin-links" style="font-size:18px;width:18px;height:18px;"></span> Open Console';
+                                        });
+                                });
+                            }
+                        })();
+                        </script>
+
                         <!-- Quick Stats -->
                         <div class="guardify-stats-row">
                             <div class="guardify-stat-card">
