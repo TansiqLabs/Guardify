@@ -963,24 +963,29 @@ class Guardify_Order_Columns {
             true
         );
         
-        wp_localize_script('guardify-order-columns', 'guardifyOrderColumns', array(
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('guardify-order-columns-nonce'),
-            'strings' => array(
-                'blocking' => __('Blocking...', 'guardify'),
-                'unblocking' => __('Unblocking...', 'guardify'),
-                'phone_blocked' => __('Phone Blocked', 'guardify'),
-                'ip_blocked' => __('IP Blocked', 'guardify'),
-                'device_blocked' => __('Device Blocked', 'guardify'),
-                'block_phone' => __('Block Phone', 'guardify'),
-                'block_ip' => __('Block IP', 'guardify'),
-                'block_device' => __('Block Device', 'guardify'),
-                'error' => __('Error occurred', 'guardify'),
-                'no_data' => __('No data available', 'guardify'),
-                'confirm_block' => __('Are you sure you want to block this %s?', 'guardify'),
-                'confirm_unblock' => __('Are you sure you want to unblock this %s?', 'guardify'),
-            )
-        ));
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script('guardify-order-columns',
+            'var guardifyOrderColumns = ' . wp_json_encode(array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('guardify-order-columns-nonce'),
+                'strings' => array(
+                    'blocking' => __('Blocking...', 'guardify'),
+                    'unblocking' => __('Unblocking...', 'guardify'),
+                    'phone_blocked' => __('Phone Blocked', 'guardify'),
+                    'ip_blocked' => __('IP Blocked', 'guardify'),
+                    'device_blocked' => __('Device Blocked', 'guardify'),
+                    'block_phone' => __('Block Phone', 'guardify'),
+                    'block_ip' => __('Block IP', 'guardify'),
+                    'block_device' => __('Block Device', 'guardify'),
+                    'error' => __('Error occurred', 'guardify'),
+                    'no_data' => __('No data available', 'guardify'),
+                    'confirm_block' => __('Are you sure you want to block this %s?', 'guardify'),
+                    'confirm_unblock' => __('Are you sure you want to unblock this %s?', 'guardify'),
+                ),
+            )) . ';',
+            'before'
+        );
         
         wp_enqueue_style(
             'guardify-order-columns',

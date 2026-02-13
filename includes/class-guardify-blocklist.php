@@ -71,18 +71,23 @@ class Guardify_Blocklist {
             true
         );
 
-        wp_localize_script('guardify-blocklist', 'guardifyBlocklist', array(
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('guardify-blocklist-nonce'),
-            'strings' => array(
-                'confirm_remove' => __('Are you sure you want to remove this from blocklist?', 'guardify'),
-                'confirm_add' => __('Are you sure you want to add this to blocklist?', 'guardify'),
-                'removing' => __('Removing...', 'guardify'),
-                'adding' => __('Adding...', 'guardify'),
-                'error' => __('Error occurred', 'guardify'),
-                'no_orders' => __('No orders found', 'guardify'),
-            )
-        ));
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script('guardify-blocklist',
+            'var guardifyBlocklist = ' . wp_json_encode(array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('guardify-blocklist-nonce'),
+                'strings' => array(
+                    'confirm_remove' => __('Are you sure you want to remove this from blocklist?', 'guardify'),
+                    'confirm_add' => __('Are you sure you want to add this to blocklist?', 'guardify'),
+                    'removing' => __('Removing...', 'guardify'),
+                    'adding' => __('Adding...', 'guardify'),
+                    'error' => __('Error occurred', 'guardify'),
+                    'no_orders' => __('No orders found', 'guardify'),
+                ),
+            )) . ';',
+            'before'
+        );
     }
 
     /**

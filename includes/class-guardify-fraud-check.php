@@ -395,9 +395,14 @@ class Guardify_Fraud_Check {
             true
         );
 
-        wp_localize_script('guardify-fraud-check', 'guardifyFraudCheck', [
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce'   => wp_create_nonce('guardify_ajax_nonce'),
-        ]);
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script('guardify-fraud-check',
+            'var guardifyFraudCheck = ' . wp_json_encode([
+                'ajaxurl' => admin_url('admin-ajax.php'),
+                'nonce'   => wp_create_nonce('guardify_ajax_nonce'),
+            ]) . ';',
+            'before'
+        );
     }
 }

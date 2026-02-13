@@ -136,11 +136,11 @@ class Guardify_Settings {
             true
         );
         
-        // Localize script for AJAX
-        wp_localize_script('guardify-admin-script', 'guardifyAjax', array(
+        // Inline script data for AJAX (wp_add_inline_script is LiteSpeed Cache safe)
+        wp_add_inline_script('guardify-admin-script', 'var guardifyAjax = ' . wp_json_encode(array(
             'ajaxurl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('guardify_ajax_nonce')
-        ));
+        )) . ';', 'before');
     }
 
     /**

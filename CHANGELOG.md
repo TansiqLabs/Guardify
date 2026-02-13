@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.0.3 — LiteSpeed Cache compatibility & incomplete order fix
+
+### Fixed
+- **LiteSpeed Cache compatibility:** Replaced all `wp_localize_script()` calls with `wp_add_inline_script()` across ALL 9 modules — fully compatible with LiteSpeed Cache Advanced, Aggressive, and Extreme optimization modes
+- **Incomplete order cooldown:** Hooked `check_cooldown_on_new_order()` to `woocommerce_new_order` and `woocommerce_checkout_order_created` — draft/incomplete orders from Cartflows and similar plugins now trigger cooldown auto-fail
+
+### Modules updated
+- `class-guardify-settings.php` — `guardifyAjax`
+- `class-guardify-order-cooldown.php` — `guardifyOrderCooldown`
+- `class-guardify-phone-validation.php` — `guardifyPhoneValidation`
+- `class-guardify-steadfast.php` — `guardifySteadfast`
+- `class-guardify-order-columns.php` — `guardifyOrderColumns`
+- `class-guardify-fraud-check.php` — `guardifyFraudCheck`
+- `class-guardify-phone-history.php` — `guardifyPhoneHistory`
+- `class-guardify-blocklist.php` — `guardifyBlocklist`
+- `class-guardify-staff-report.php` — `guardifyStaffReport`
+
+### Performance
+- Frontend scripts load ONLY on checkout pages with `defer` strategy — zero impact on homepage/product/cart
+- Inline data scripts paired to their handles — immune to JS combination/reordering
+
+---
+
 ## v1.0.2 — Courier proxy architecture
 
 ### Changed

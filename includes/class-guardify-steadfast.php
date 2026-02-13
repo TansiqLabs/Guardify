@@ -127,20 +127,25 @@ class Guardify_SteadFast {
             GUARDIFY_VERSION
         );
 
-        wp_localize_script('guardify-steadfast', 'guardifySteadfast', array(
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('guardify-steadfast-nonce'),
-            'enabled' => $this->is_enabled(),
-            'i18n' => array(
-                'sending' => __('Sending...', 'guardify'),
-                'sent' => __('✓ Sent', 'guardify'),
-                'failed' => __('Failed!', 'guardify'),
-                'unauthorized' => __('Unauthorized', 'guardify'),
-                'checking' => __('Checking...', 'guardify'),
-                'success' => __('Success', 'guardify'),
-                'copied' => __('Copied!', 'guardify'),
-            )
-        ));
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script('guardify-steadfast',
+            'var guardifySteadfast = ' . wp_json_encode(array(
+                'ajaxurl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('guardify-steadfast-nonce'),
+                'enabled' => $this->is_enabled(),
+                'i18n' => array(
+                    'sending' => __('Sending...', 'guardify'),
+                    'sent' => __('✓ Sent', 'guardify'),
+                    'failed' => __('Failed!', 'guardify'),
+                    'unauthorized' => __('Unauthorized', 'guardify'),
+                    'checking' => __('Checking...', 'guardify'),
+                    'success' => __('Success', 'guardify'),
+                    'copied' => __('Copied!', 'guardify'),
+                ),
+            )) . ';',
+            'before'
+        );
     }
 
     /**

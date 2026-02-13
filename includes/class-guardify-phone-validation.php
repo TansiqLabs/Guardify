@@ -96,16 +96,17 @@ class Guardify_Phone_Validation {
             GUARDIFY_VERSION
         );
 
-        // Localize script with settings
-        wp_localize_script(
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script(
             'guardify-phone-validation',
-            'guardifyPhoneValidation',
-            array(
+            'var guardifyPhoneValidation = ' . wp_json_encode(array(
                 'enabled' => $this->is_enabled(),
                 'message' => $this->get_validation_message(),
                 'ajaxurl' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('guardify-phone-validation')
-            )
+                'nonce' => wp_create_nonce('guardify-phone-validation'),
+            )) . ';',
+            'before'
         );
     }
 

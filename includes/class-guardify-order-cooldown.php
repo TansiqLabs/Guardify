@@ -53,6 +53,10 @@ class Guardify_Order_Cooldown {
             // Cartflows specific checkout step hook
             add_action('cartflows_checkout_before_process_checkout', array($this, 'check_cooldown'), 1);
             add_action('wcf_checkout_before_process_checkout', array($this, 'check_cooldown'), 1);
+            
+            // Auto-fail orders that violate cooldown (catches draft/incomplete orders from Cartflows etc.)
+            add_action('woocommerce_new_order', array($this, 'check_cooldown_on_new_order'), 5, 2);
+            add_action('woocommerce_checkout_order_created', array($this, 'check_cooldown_on_new_order'), 5, 2);
         }
         
         // Always store IP address on order creation (for future reference/analytics)
@@ -212,10 +216,11 @@ class Guardify_Order_Cooldown {
             )
         );
 
-        wp_localize_script(
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script(
             'guardify-order-cooldown',
-            'guardifyOrderCooldown',
-            array(
+            'var guardifyOrderCooldown = ' . wp_json_encode(array(
                 'ajaxurl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('guardify-cooldown-nonce'),
                 'phoneCooldownEnabled' => $this->is_phone_cooldown_enabled(),
@@ -225,7 +230,8 @@ class Guardify_Order_Cooldown {
                 'phoneCooldownMessage' => $this->get_phone_cooldown_message(),
                 'ipCooldownMessage' => $this->get_ip_cooldown_message(),
                 'contactNumber' => get_option('guardify_contact_number', ''),
-            )
+            )) . ';',
+            'before'
         );
     }
 

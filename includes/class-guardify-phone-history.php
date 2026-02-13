@@ -491,10 +491,15 @@ class Guardify_Phone_History {
             true
         );
 
-        wp_localize_script('guardify-phone-history', 'guardifyPhoneHistory', array(
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('guardify-admin-nonce'),
-        ));
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script('guardify-phone-history',
+            'var guardifyPhoneHistory = ' . wp_json_encode(array(
+                'ajaxurl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('guardify-admin-nonce'),
+            )) . ';',
+            'before'
+        );
 
         wp_add_inline_style('woocommerce_admin_styles', $this->get_admin_styles());
     }

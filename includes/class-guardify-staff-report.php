@@ -69,10 +69,15 @@ class Guardify_Staff_Report {
             true
         );
 
-        wp_localize_script('guardify-staff-report', 'guardifyStaffReport', array(
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('guardify_staff_report_nonce'),
-        ));
+        // Use wp_add_inline_script instead of wp_localize_script
+        // This is immune to LiteSpeed Cache JS combination/reordering
+        wp_add_inline_script('guardify-staff-report',
+            'var guardifyStaffReport = ' . wp_json_encode(array(
+                'ajaxurl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('guardify_staff_report_nonce'),
+            )) . ';',
+            'before'
+        );
     }
 
     /**
