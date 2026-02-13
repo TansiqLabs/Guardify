@@ -1,0 +1,371 @@
+/* ═══════════════════════════════════════════════════════════════
+   Guardify Fraud Check — Order Page Styles
+   Matches TansiqLabs dark UI aesthetic
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Meta Box Container ─────────────────────────────────────── */
+#guardify_fraud_check .inside {
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+#guardify_fraud_check .postbox-header h2,
+#guardify_fraud_check .hndle {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+/* ── Loading State ──────────────────────────────────────────── */
+.guardify-fc-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 32px 16px;
+    text-align: center;
+}
+
+.guardify-fc-loading p {
+    font-size: 12px;
+    color: #71717a;
+    margin: 0;
+}
+
+.guardify-fc-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid #e4e4e7;
+    border-top-color: #2db6ae;
+    border-radius: 50%;
+    animation: guardify-spin 0.7s linear infinite;
+}
+
+@keyframes guardify-spin {
+    to { transform: rotate(360deg); }
+}
+
+.guardify-fc-empty {
+    padding: 20px 16px;
+    text-align: center;
+    font-size: 12px;
+    color: #a1a1aa;
+    margin: 0;
+}
+
+/* ── Result Container ───────────────────────────────────────── */
+.guardify-fc-result {
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+/* ── Score Ring ─────────────────────────────────────────────── */
+.guardify-fc-score-ring {
+    position: relative;
+    width: 88px;
+    height: 88px;
+}
+
+.guardify-fc-ring-svg {
+    width: 100%;
+    height: 100%;
+}
+
+.guardify-fc-ring-value {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Risk Label ─────────────────────────────────────────────── */
+.guardify-fc-risk-label {
+    font-size: 14px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.guardify-fc-phone {
+    font-size: 12px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    color: #71717a;
+    letter-spacing: 0.02em;
+}
+
+/* ── Quick Stats ────────────────────────────────────────────── */
+.guardify-fc-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    width: 100%;
+    margin-top: 4px;
+}
+
+.guardify-fc-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 10px 6px;
+    border-radius: 10px;
+    background: #f4f4f5;
+    border: 1px solid #e4e4e7;
+}
+
+.guardify-fc-stat-val {
+    font-size: 18px;
+    font-weight: 700;
+    color: #09090b;
+    font-variant-numeric: tabular-nums;
+}
+
+.guardify-fc-stat-lbl {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #a1a1aa;
+}
+
+/* ── Signals ────────────────────────────────────────────────── */
+.guardify-fc-signals {
+    width: 100%;
+    margin-top: 4px;
+}
+
+.guardify-fc-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #71717a;
+    margin: 0 0 8px;
+    padding: 0;
+}
+
+.guardify-fc-signal {
+    background: #fafafa;
+    border: 1px solid #e4e4e7;
+    border-left: 3px solid;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+}
+
+.guardify-fc-signal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.guardify-fc-signal-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #27272a;
+}
+
+.guardify-fc-signal-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+}
+
+.guardify-fc-signal-detail {
+    font-size: 11px;
+    color: #71717a;
+    margin: 4px 0 0;
+    line-height: 1.4;
+}
+
+/* ── Event History ──────────────────────────────────────────── */
+.guardify-fc-history {
+    width: 100%;
+    margin-top: 4px;
+}
+
+.guardify-fc-toggle {
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    padding: 8px 0;
+    border-bottom: 1px solid #e4e4e7;
+}
+
+.guardify-fc-toggle::-webkit-details-marker {
+    display: none;
+}
+
+.guardify-fc-toggle::before {
+    content: '▸';
+    display: inline-block;
+    margin-right: 6px;
+    transition: transform 0.15s;
+}
+
+details[open] > .guardify-fc-toggle::before {
+    transform: rotate(90deg);
+}
+
+.guardify-fc-history-list {
+    padding-top: 8px;
+}
+
+.guardify-fc-event {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid #f4f4f5;
+}
+
+.guardify-fc-event:last-child {
+    border-bottom: none;
+}
+
+.guardify-fc-event-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+
+.guardify-fc-event-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.guardify-fc-event-type {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: #27272a;
+}
+
+.guardify-fc-event-meta {
+    display: block;
+    font-size: 10px;
+    color: #a1a1aa;
+    margin-top: 2px;
+}
+
+.guardify-fc-event-time {
+    font-size: 10px;
+    color: #a1a1aa;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* ── Refresh Button ─────────────────────────────────────────── */
+.guardify-fc-refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #52525b;
+    background: #fafafa;
+    border: 1px solid #e4e4e7;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-top: 4px;
+}
+
+.guardify-fc-refresh:hover {
+    background: #f4f4f5;
+    border-color: #d4d4d8;
+    color: #27272a;
+}
+
+/* ── Order List Badge ───────────────────────────────────────── */
+.guardify-fc-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    cursor: default;
+    transition: all 0.15s;
+}
+
+.guardify-fc-badge--low {
+    background: #dcfce7;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+}
+
+.guardify-fc-badge--medium {
+    background: #fef3c7;
+    color: #d97706;
+    border: 1px solid #fde68a;
+}
+
+.guardify-fc-badge--high {
+    background: #ffedd5;
+    color: #ea580c;
+    border: 1px solid #fed7aa;
+}
+
+.guardify-fc-badge--critical {
+    background: #fecaca;
+    color: #dc2626;
+    border: 1px solid #fca5a5;
+}
+
+.guardify-fc-badge--na {
+    background: #f4f4f5;
+    color: #a1a1aa;
+    border: 1px solid #e4e4e7;
+}
+
+.guardify-fc-badge--pending {
+    background: #f4f4f5;
+    color: #71717a;
+    border: 1px dashed #d4d4d8;
+    cursor: pointer;
+    animation: guardify-pulse 2s ease-in-out infinite;
+}
+
+.guardify-fc-badge--pending:hover {
+    background: #e4e4e7;
+    color: #27272a;
+}
+
+@keyframes guardify-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* ── Responsive for narrow sidebars ────────────────────────── */
+@media (max-width: 782px) {
+    .guardify-fc-stats {
+        gap: 4px;
+    }
+    .guardify-fc-stat {
+        padding: 8px 4px;
+    }
+    .guardify-fc-stat-val {
+        font-size: 15px;
+    }
+}

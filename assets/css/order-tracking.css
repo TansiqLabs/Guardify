@@ -1,0 +1,94 @@
+/**
+ * Guardify Order Tracking - Premium Minimal
+ */
+
+:root {
+    --ot-primary: #0d9488;
+    --ot-slate-50: #f8fafc;
+    --ot-slate-100: #f1f5f9;
+    --ot-slate-200: #e2e8f0;
+    --ot-slate-400: #94a3b8;
+    --ot-slate-500: #64748b;
+    --ot-slate-600: #475569;
+    --ot-slate-700: #334155;
+    --ot-slate-800: #1e293b;
+    --ot-radius: 6px;
+    --ot-transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Status Changed Column */
+.guardify-status-changed {
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.guardify-user-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border-radius: var(--ot-radius);
+    font-size: 12px;
+    font-weight: 600;
+    transition: var(--ot-transition);
+    min-width: 80px;
+    text-align: center;
+}
+
+.guardify-user-badge:hover {
+    transform: translateY(-1px);
+}
+
+.guardify-time {
+    color: var(--ot-slate-500);
+    font-size: 11px;
+    margin-top: 4px;
+    display: block;
+}
+
+.guardify-no-data {
+    color: var(--ot-slate-400);
+    font-style: normal;
+    font-size: 12px;
+}
+
+.column-guardify_completed_by {
+    width: 150px;
+}
+
+/* Order Preview Modal */
+.wc-order-preview-guardify-info {
+    margin: 16px 0;
+    padding: 16px;
+    background: var(--ot-slate-50);
+    border-radius: 8px;
+    border-left: 3px solid var(--ot-primary);
+}
+
+.wc-order-preview-guardify-info h3 {
+    margin: 0 0 12px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ot-slate-700);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.wc-order-preview-guardify-info .guardify-user-badge {
+    margin-bottom: 8px;
+}
+
+/* Table Cell Alignment */
+.wp-list-table .column-guardify_completed_by {
+    vertical-align: middle;
+}
+
+.wp-list-table .column-guardify_completed_by .guardify-status-changed {
+    display: block;
+}
+
+/* WooCommerce HPOS & Legacy Support */
+.woocommerce_page_wc-orders .guardify-user-badge,
+.edit-php.post-type-shop_order .guardify-user-badge {
+    display: inline-flex !important;
+}

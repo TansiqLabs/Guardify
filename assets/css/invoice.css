@@ -1,0 +1,465 @@
+/**
+ * Guardify Invoice - Premium Minimal
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+:root {
+    --inv-primary: #0d9488;
+    --inv-slate-50: #f8fafc;
+    --inv-slate-100: #f1f5f9;
+    --inv-slate-200: #e2e8f0;
+    --inv-slate-300: #cbd5e1;
+    --inv-slate-400: #94a3b8;
+    --inv-slate-500: #64748b;
+    --inv-slate-600: #475569;
+    --inv-slate-700: #334155;
+    --inv-slate-800: #1e293b;
+    --inv-slate-900: #0f172a;
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+.guardify-invoice {
+    color: var(--inv-slate-700);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.6;
+    background-color: var(--inv-slate-100);
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+.guardify-invoice * {
+    box-sizing: border-box;
+}
+
+.guardify-invoice table {
+    width: 100%;
+    border-collapse: collapse;
+    border: none;
+}
+
+.guardify-invoice table td,
+.guardify-invoice table th {
+    border: none;
+}
+
+.guardify-invoice hr {
+    background: var(--inv-slate-200);
+    height: 1px;
+    border: none;
+    margin: 0;
+}
+
+/* ============================================
+   CONTAINER
+   ============================================ */
+.guardify-invoice-container {
+    max-width: 800px;
+    padding: 32px 16px;
+    margin: 0 auto;
+}
+
+.guardify-invoice-wrap {
+    position: relative;
+}
+
+.guardify-invoice-inner {
+    background: #fff;
+    border-radius: 12px;
+    padding: 48px;
+    position: relative;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.guardify-invoice-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 32px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--inv-slate-200);
+}
+
+.guardify-invoice-logo img {
+    max-height: 40px;
+    width: auto;
+}
+
+.guardify-invoice-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--inv-slate-900);
+    text-transform: uppercase;
+    letter-spacing: -0.025em;
+}
+
+/* ============================================
+   INFO SECTION
+   ============================================ */
+.guardify-invoice-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 32px;
+}
+
+.guardify-invoice-info-left,
+.guardify-invoice-info-right {
+    width: 48%;
+}
+
+.guardify-invoice-separator {
+    height: 2px;
+    background: var(--inv-primary);
+    margin-bottom: 32px;
+    border-radius: 1px;
+}
+
+/* Invoice Details */
+.guardify-invoice-details {
+    margin-bottom: 24px;
+}
+
+.guardify-invoice-details h4 {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--inv-slate-500);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0 0 8px 0;
+}
+
+.guardify-invoice-details p {
+    margin: 0 0 4px 0;
+    color: var(--inv-slate-700);
+    font-size: 14px;
+}
+
+.guardify-invoice-details strong {
+    color: var(--inv-slate-800);
+    font-weight: 600;
+}
+
+/* Customer & Company Info */
+.guardify-invoice-customer,
+.guardify-invoice-company {
+    background: var(--inv-slate-50);
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.guardify-invoice-customer h4,
+.guardify-invoice-company h4 {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--inv-slate-500);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0 0 12px 0;
+}
+
+.guardify-invoice-customer p,
+.guardify-invoice-company p {
+    margin: 0 0 4px 0;
+    color: var(--inv-slate-700);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.guardify-invoice-customer strong,
+.guardify-invoice-company strong {
+    color: var(--inv-slate-800);
+    font-weight: 600;
+    font-size: 15px;
+    display: block;
+    margin-bottom: 4px;
+}
+
+/* ============================================
+   ITEMS TABLE
+   ============================================ */
+.guardify-invoice-items {
+    margin-bottom: 32px;
+}
+
+.guardify-invoice-items table {
+    width: 100%;
+}
+
+.guardify-invoice-items thead th {
+    background: var(--inv-slate-900);
+    color: #fff;
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.guardify-invoice-items thead th:first-child {
+    border-radius: 6px 0 0 0;
+}
+
+.guardify-invoice-items thead th:last-child {
+    border-radius: 0 6px 0 0;
+    text-align: right;
+}
+
+.guardify-invoice-items tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--inv-slate-100);
+    font-size: 13px;
+    color: var(--inv-slate-700);
+}
+
+.guardify-invoice-items tbody td:last-child {
+    text-align: right;
+    font-weight: 600;
+    color: var(--inv-slate-800);
+}
+
+.guardify-invoice-items tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.guardify-invoice-items tbody tr:hover td {
+    background: var(--inv-slate-50);
+}
+
+/* Item Meta */
+.guardify-invoice-item-meta {
+    font-size: 12px;
+    color: var(--inv-slate-500);
+    margin-top: 4px;
+}
+
+/* ============================================
+   TOTALS
+   ============================================ */
+.guardify-invoice-totals {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 32px;
+}
+
+.guardify-invoice-totals table {
+    width: 280px;
+}
+
+.guardify-invoice-totals td {
+    padding: 8px 0;
+    font-size: 13px;
+}
+
+.guardify-invoice-totals td:first-child {
+    color: var(--inv-slate-500);
+}
+
+.guardify-invoice-totals td:last-child {
+    text-align: right;
+    font-weight: 600;
+    color: var(--inv-slate-800);
+}
+
+.guardify-invoice-totals tr.total td {
+    padding-top: 16px;
+    border-top: 2px solid var(--inv-slate-200);
+    font-size: 16px;
+}
+
+.guardify-invoice-totals tr.total td:last-child {
+    color: var(--inv-primary);
+    font-weight: 700;
+}
+
+/* ============================================
+   NOTES & TERMS
+   ============================================ */
+.guardify-invoice-notes {
+    background: var(--inv-slate-50);
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+}
+
+.guardify-invoice-notes h4 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--inv-slate-600);
+    margin: 0 0 8px 0;
+}
+
+.guardify-invoice-notes p {
+    margin: 0;
+    color: var(--inv-slate-500);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+/* ============================================
+   FOOTER
+   ============================================ */
+.guardify-invoice-footer {
+    text-align: center;
+    padding-top: 24px;
+    border-top: 1px solid var(--inv-slate-200);
+}
+
+.guardify-invoice-footer p {
+    margin: 0 0 4px 0;
+    color: var(--inv-slate-500);
+    font-size: 12px;
+}
+
+.guardify-invoice-footer .thank-you {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--inv-primary);
+}
+
+/* ============================================
+   STATUS BADGE
+   ============================================ */
+.guardify-invoice-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.guardify-invoice-status.paid {
+    background: #d1fae5;
+    color: #059669;
+}
+
+.guardify-invoice-status.pending {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.guardify-invoice-status.cancelled {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+@media print {
+    .guardify-invoice {
+        background: #fff !important;
+    }
+
+    .guardify-invoice-container {
+        padding: 0;
+        max-width: none;
+    }
+
+    .guardify-invoice-inner {
+        box-shadow: none;
+        padding: 20px;
+        border-radius: 0;
+    }
+
+    .guardify-invoice-items thead th {
+        background: var(--inv-slate-800) !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .guardify-print-btn {
+        display: none !important;
+    }
+}
+
+/* ============================================
+   PRINT BUTTON
+   ============================================ */
+.guardify-print-btn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--inv-primary);
+    color: #fff;
+    border: none;
+    padding: 14px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 4px 12px rgba(13, 148, 136, 0.3);
+    transition: all 0.2s ease;
+    z-index: 100;
+}
+
+.guardify-print-btn:hover {
+    background: #0f766e;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(13, 148, 136, 0.4);
+}
+
+.guardify-print-btn .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 640px) {
+    .guardify-invoice-inner {
+        padding: 24px;
+    }
+
+    .guardify-invoice-header {
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .guardify-invoice-info {
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .guardify-invoice-info-left,
+    .guardify-invoice-info-right {
+        width: 100%;
+    }
+
+    .guardify-invoice-title {
+        font-size: 22px;
+    }
+
+    .guardify-invoice-items {
+        overflow-x: auto;
+    }
+
+    .guardify-invoice-items table {
+        min-width: 500px;
+    }
+
+    .guardify-invoice-totals {
+        justify-content: stretch;
+    }
+
+    .guardify-invoice-totals table {
+        width: 100%;
+    }
+}

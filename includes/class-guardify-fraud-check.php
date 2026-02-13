@@ -1,0 +1,403 @@
+<?php
+/**
+ * Guardify Fraud Check Class
+ * TansiqLabs API-powered fraud risk assessment displayed on WooCommerce order pages.
+ *
+ * Shows a real-time fraud score, risk signals, and event history for each
+ * order's phone number directly in the WooCommerce admin order edit screen.
+ *
+ * @package Guardify
+ * @since   1.2.0
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class Guardify_Fraud_Check {
+    private static ?self $instance = null;
+
+    /** TansiqLabs Fraud Check endpoint. */
+    private const API_ENDPOINT = 'https://tansiqlabs.com/api/guardify/fraud-check';
+
+    /** Transient TTL: cache each result for 10 minutes. */
+    private const CACHE_TTL = 600;
+
+    public static function get_instance(): self {
+        if (null === self::$instance) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+
+    private function __construct() {
+        // Meta box on single order
+        add_action('add_meta_boxes', [$this, 'register_meta_box']);
+
+        // HPOS support
+        add_action('woocommerce_page_wc-orders', function () {
+            add_action('add_meta_boxes', [$this, 'register_meta_box']);
+        }, 5);
+
+        // AJAX handler for on-demand fraud check
+        add_action('wp_ajax_guardify_fraud_check', [$this, 'ajax_fraud_check']);
+
+        // Enqueue
+        add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
+
+        // Add fraud score badge to order list column
+        add_filter('manage_edit-shop_order_columns', [$this, 'add_list_column'], 15);
+        add_action('manage_shop_order_posts_custom_column', [$this, 'render_list_column_legacy'], 10, 2);
+        add_filter('woocommerce_shop_order_list_table_columns', [$this, 'add_list_column'], 15);
+        add_action('woocommerce_shop_order_list_table_custom_column', [$this, 'render_list_column'], 10, 2);
+    }
+
+    // ── Meta Box ──────────────────────────────────────────────────────────
+
+    public function register_meta_box(): void {
+        $screens = ['shop_order'];
+        if (class_exists('Automattic\\WooCommerce\\Utilities\\OrderUtil') &&
+            \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled()) {
+            $screens[] = 'woocommerce_page_wc-orders';
+        }
+
+        foreach ($screens as $screen) {
+            add_meta_box(
+                'guardify_fraud_check',
+                __('Guardify Fraud Check', 'guardify'),
+                [$this, 'render_meta_box'],
+                $screen,
+                'side',
+                'high'
+            );
+        }
+    }
+
+    public function render_meta_box($post_or_order): void {
+        $order = $post_or_order instanceof \WC_Order
+            ? $post_or_order
+            : wc_get_order($post_or_order->ID ?? 0);
+
+        if (!$order) {
+            echo '<p class="guardify-fc-empty">Order not found.</p>';
+            return;
+        }
+
+        $phone   = $order->get_billing_phone();
+        $orderId = $order->get_id();
+
+        if (empty($phone)) {
+            echo '<p class="guardify-fc-empty">No billing phone number for this order.</p>';
+            return;
+        }
+
+        // Check cache
+        $cached = $this->get_cached_result($phone);
+        ?>
+        <div id="guardify-fraud-check-box" data-order-id="<?php echo esc_attr($orderId); ?>" data-phone="<?php echo esc_attr($phone); ?>">
+            <?php if ($cached): ?>
+                <?php $this->render_result_html($cached, $phone); ?>
+            <?php else: ?>
+                <div class="guardify-fc-loading">
+                    <div class="guardify-fc-spinner"></div>
+                    <p>Checking fraud risk for <strong><?php echo esc_html($phone); ?></strong>...</p>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    // ── AJAX Handler ──────────────────────────────────────────────────────
+
+    public function ajax_fraud_check(): void {
+        check_ajax_referer('guardify_ajax_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+
+        $phone = sanitize_text_field($_POST['phone'] ?? '');
+        if (empty($phone)) {
+            wp_send_json_error(['message' => 'Phone number required']);
+        }
+
+        $result = $this->fetch_fraud_score($phone);
+
+        if ($result === null) {
+            wp_send_json_error(['message' => 'Could not connect to TansiqLabs API']);
+        }
+
+        // Cache
+        $this->cache_result($phone, $result);
+
+        // Return rendered HTML for the meta box
+        ob_start();
+        $this->render_result_html($result, $phone);
+        $html = ob_get_clean();
+
+        wp_send_json_success([
+            'html'  => $html,
+            'score' => $result['score'] ?? 0,
+            'risk'  => $result['risk'] ?? 'low',
+        ]);
+    }
+
+    // ── API Communication ─────────────────────────────────────────────────
+
+    private function fetch_fraud_score(string $phone): ?array {
+        $api_key = get_option('guardify_site_api_key', '');
+        if (empty($api_key)) {
+            $api_key = get_option('guardify_api_key', '');
+        }
+
+        $response = wp_remote_post(self::API_ENDPOINT, [
+            'timeout'     => 15,
+            'headers'     => ['Content-Type' => 'application/json'],
+            'body'        => wp_json_encode([
+                'api_key' => $api_key,
+                'phone'   => $phone,
+            ]),
+            'sslverify'   => true,
+        ]);
+
+        if (is_wp_error($response)) {
+            error_log('Guardify Fraud Check Error: ' . $response->get_error_message());
+            return null;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if ($code !== 200 || empty($body['success'])) {
+            error_log('Guardify Fraud Check API Error: HTTP ' . $code . ' — ' . ($body['message'] ?? 'Unknown'));
+            return null;
+        }
+
+        return $body;
+    }
+
+    // ── Cache ─────────────────────────────────────────────────────────────
+
+    private function cache_result(string $phone, array $result): void {
+        $key = 'guardify_fc_' . md5($phone);
+        set_transient($key, $result, self::CACHE_TTL);
+    }
+
+    private function get_cached_result(string $phone): ?array {
+        $key   = 'guardify_fc_' . md5($phone);
+        $cached = get_transient($key);
+        return is_array($cached) ? $cached : null;
+    }
+
+    // ── Render: Meta Box HTML ─────────────────────────────────────────────
+
+    private function render_result_html(array $result, string $phone): void {
+        $score   = intval($result['score'] ?? 0);
+        $risk    = $result['risk'] ?? 'low';
+        $signals = $result['signals'] ?? [];
+        $summary = $result['summary'] ?? [];
+        $history = $result['history'] ?? [];
+
+        $risk_labels = [
+            'low'      => 'Low Risk',
+            'medium'   => 'Medium Risk',
+            'high'     => 'High Risk',
+            'critical' => 'Critical Risk',
+        ];
+        $risk_colors = [
+            'low'      => '#22c55e',
+            'medium'   => '#f59e0b',
+            'high'     => '#f97316',
+            'critical' => '#ef4444',
+        ];
+
+        $color = $risk_colors[$risk] ?? '#22c55e';
+        $label = $risk_labels[$risk] ?? 'Unknown';
+        ?>
+        <div class="guardify-fc-result" data-risk="<?php echo esc_attr($risk); ?>">
+            <!-- Score ring -->
+            <div class="guardify-fc-score-ring">
+                <svg viewBox="0 0 80 80" class="guardify-fc-ring-svg">
+                    <circle cx="40" cy="40" r="34" fill="none" stroke-width="6" stroke="#e5e7eb" opacity="0.2"/>
+                    <circle cx="40" cy="40" r="34" fill="none" stroke-width="6"
+                            stroke="<?php echo esc_attr($color); ?>"
+                            stroke-linecap="round"
+                            stroke-dasharray="<?php echo esc_attr(($score / 100) * 213.6); ?> 213.6"
+                            transform="rotate(-90 40 40)"/>
+                </svg>
+                <div class="guardify-fc-ring-value" style="color:<?php echo esc_attr($color); ?>"><?php echo esc_html($score); ?></div>
+            </div>
+
+            <div class="guardify-fc-risk-label" style="color:<?php echo esc_attr($color); ?>">
+                <?php echo esc_html($label); ?>
+            </div>
+            <div class="guardify-fc-phone"><?php echo esc_html($phone); ?></div>
+
+            <!-- Quick stats -->
+            <div class="guardify-fc-stats">
+                <div class="guardify-fc-stat">
+                    <span class="guardify-fc-stat-val"><?php echo intval($summary['totalEvents'] ?? 0); ?></span>
+                    <span class="guardify-fc-stat-lbl">Events</span>
+                </div>
+                <div class="guardify-fc-stat">
+                    <span class="guardify-fc-stat-val"><?php echo intval($summary['blockedEvents'] ?? 0); ?></span>
+                    <span class="guardify-fc-stat-lbl">Blocked</span>
+                </div>
+                <div class="guardify-fc-stat">
+                    <span class="guardify-fc-stat-val"><?php echo intval($summary['uniqueSites'] ?? 0); ?></span>
+                    <span class="guardify-fc-stat-lbl">Sites</span>
+                </div>
+            </div>
+
+            <!-- Signals -->
+            <?php if (!empty($signals)): ?>
+                <div class="guardify-fc-signals">
+                    <h4 class="guardify-fc-section-title">Risk Signals</h4>
+                    <?php foreach ($signals as $signal): ?>
+                        <?php
+                        $sev_colors = [
+                            'low'      => '#22c55e',
+                            'medium'   => '#f59e0b',
+                            'high'     => '#f97316',
+                            'critical' => '#ef4444',
+                        ];
+                        $sc = $sev_colors[$signal['severity'] ?? 'low'] ?? '#6b7280';
+                        ?>
+                        <div class="guardify-fc-signal" style="border-left-color:<?php echo esc_attr($sc); ?>">
+                            <div class="guardify-fc-signal-header">
+                                <span class="guardify-fc-signal-label"><?php echo esc_html($signal['label'] ?? ''); ?></span>
+                                <span class="guardify-fc-signal-badge" style="background:<?php echo esc_attr($sc); ?>20;color:<?php echo esc_attr($sc); ?>">
+                                    <?php echo esc_html(ucfirst($signal['severity'] ?? '')); ?>
+                                </span>
+                            </div>
+                            <p class="guardify-fc-signal-detail"><?php echo esc_html($signal['detail'] ?? ''); ?></p>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
+            <!-- History (collapsible) -->
+            <?php if (!empty($history)): ?>
+                <details class="guardify-fc-history">
+                    <summary class="guardify-fc-section-title guardify-fc-toggle">
+                        Event History (<?php echo count($history); ?>)
+                    </summary>
+                    <div class="guardify-fc-history-list">
+                        <?php foreach (array_slice($history, 0, 10) as $event): ?>
+                            <?php
+                            $lvl_colors = ['LOW' => '#6b7280', 'MEDIUM' => '#f59e0b', 'HIGH' => '#f97316', 'CRITICAL' => '#ef4444'];
+                            $ec = $lvl_colors[$event['threatLevel'] ?? 'LOW'] ?? '#6b7280';
+                            ?>
+                            <div class="guardify-fc-event">
+                                <span class="guardify-fc-event-dot" style="background:<?php echo esc_attr($ec); ?>"></span>
+                                <div class="guardify-fc-event-body">
+                                    <span class="guardify-fc-event-type">
+                                        <?php echo esc_html(ucwords(str_replace('_', ' ', $event['eventType'] ?? ''))); ?>
+                                    </span>
+                                    <span class="guardify-fc-event-meta">
+                                        <?php echo esc_html($event['sourceIp'] ?? ''); ?>
+                                        · <?php echo esc_html($event['site'] ?? ''); ?>
+                                        · <?php echo $event['blocked'] ? '<span style="color:#22c55e">Blocked</span>' : '<span style="color:#ef4444">Allowed</span>'; ?>
+                                    </span>
+                                </div>
+                                <span class="guardify-fc-event-time">
+                                    <?php
+                                    $ts = strtotime($event['date'] ?? 'now');
+                                    echo esc_html(human_time_diff($ts, time()) . ' ago');
+                                    ?>
+                                </span>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </details>
+            <?php endif; ?>
+
+            <!-- Refresh button -->
+            <button type="button" class="guardify-fc-refresh" onclick="guardifyRefreshFraudCheck()">
+                ↻ Refresh
+            </button>
+        </div>
+        <?php
+    }
+
+    // ── Order List Column ─────────────────────────────────────────────────
+
+    public function add_list_column(array $columns): array {
+        $new = [];
+        foreach ($columns as $key => $val) {
+            $new[$key] = $val;
+            if ($key === 'order_number') {
+                $new['guardify_fraud_risk'] = __('Fraud Risk', 'guardify');
+            }
+        }
+        return $new;
+    }
+
+    public function render_list_column(string $column, $order): void {
+        if ($column !== 'guardify_fraud_risk') return;
+        $order_id = is_object($order) ? $order->get_id() : $order;
+        if (!is_object($order)) $order = wc_get_order($order_id);
+        if (!$order) return;
+        $this->render_fraud_badge($order);
+    }
+
+    public function render_list_column_legacy(string $column, int $post_id): void {
+        if ($column !== 'guardify_fraud_risk') return;
+        $order = wc_get_order($post_id);
+        if (!$order) return;
+        $this->render_fraud_badge($order);
+    }
+
+    private function render_fraud_badge($order): void {
+        $phone = $order->get_billing_phone();
+        if (empty($phone)) {
+            echo '<span class="guardify-fc-badge guardify-fc-badge--na" title="No phone">—</span>';
+            return;
+        }
+
+        $cached = $this->get_cached_result($phone);
+        if (!$cached) {
+            echo '<span class="guardify-fc-badge guardify-fc-badge--pending" title="Click to check" data-phone="' . esc_attr($phone) . '">?</span>';
+            return;
+        }
+
+        $score = intval($cached['score'] ?? 0);
+        $risk  = $cached['risk'] ?? 'low';
+        $title = ucfirst($risk) . ' Risk — Score: ' . $score . '/100';
+
+        echo '<span class="guardify-fc-badge guardify-fc-badge--' . esc_attr($risk) . '" title="' . esc_attr($title) . '">' . esc_html($score) . '</span>';
+    }
+
+    // ── Assets ────────────────────────────────────────────────────────────
+
+    public function enqueue_assets(string $hook): void {
+        // Load on order list + individual order screens
+        $order_screens = ['edit.php', 'post.php', 'post-new.php', 'woocommerce_page_wc-orders'];
+        $page = $_GET['page'] ?? '';
+
+        $is_order_screen = in_array($hook, $order_screens, true)
+            || $page === 'wc-orders';
+
+        if (!$is_order_screen) return;
+
+        wp_enqueue_style(
+            'guardify-fraud-check',
+            GUARDIFY_PLUGIN_URL . 'assets/css/fraud-check.css',
+            [],
+            GUARDIFY_VERSION
+        );
+
+        wp_enqueue_script(
+            'guardify-fraud-check',
+            GUARDIFY_PLUGIN_URL . 'assets/js/fraud-check.js',
+            ['jquery'],
+            GUARDIFY_VERSION,
+            true
+        );
+
+        wp_localize_script('guardify-fraud-check', 'guardifyFraudCheck', [
+            'ajaxurl' => admin_url('admin-ajax.php'),
+            'nonce'   => wp_create_nonce('guardify_ajax_nonce'),
+        ]);
+    }
+}
