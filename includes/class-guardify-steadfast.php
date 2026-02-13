@@ -15,9 +15,10 @@ class Guardify_SteadFast {
     private static ?self $instance = null;
     
     /**
-     * SteadFast API Base URL
+     * TansiqLabs Courier Proxy URL
+     * All courier API calls go through TansiqLabs — credentials never leave the server.
      */
-    private const API_BASE_URL = 'https://portal.packzy.com/api/v1/';
+    private const COURIER_API_URL = 'https://tansiqlabs.com/api/guardify/courier/';
 
     public static function get_instance(): self {
         if (null === self::$instance) {
@@ -82,17 +83,10 @@ class Guardify_SteadFast {
     }
 
     /**
-     * Get API Key
+     * Get site API key (used to authenticate with TansiqLabs courier proxy)
      */
-    private function get_api_key(): string {
-        return get_option('guardify_steadfast_api_key', '');
-    }
-
-    /**
-     * Get Secret Key
-     */
-    private function get_secret_key(): string {
-        return get_option('guardify_steadfast_secret_key', '');
+    private function get_site_api_key(): string {
+        return get_option('guardify_site_api_key', '');
     }
 
     /**
@@ -525,7 +519,7 @@ class Guardify_SteadFast {
             return;
         }
 
-        $response = $this->api_request('get_balance', array(), 'GET');
+        $response = $this->courier_request('balance');
         
         if (is_wp_error($response)) {
             wp_send_json_error(array('message' => $response->get_error_message()));
@@ -560,7 +554,7 @@ class Guardify_SteadFast {
             return;
         }
 
-        $response = $this->api_request('status_by_cid/' . $consignment_id, array(), 'GET');
+        $response = $this->courier_request('status', array('consignment_id' => $consignment_id));
         
         if (is_wp_error($response)) {
             wp_send_json_error(array('message' => $response->get_error_message()));
@@ -626,7 +620,7 @@ class Guardify_SteadFast {
         }
 
         foreach ($orders as $order_row) {
-            $response = $this->api_request('status_by_cid/' . $order_row->consignment_id, array(), 'GET');
+            $response = $this->courier_request('status', array('consignment_id' => $order_row->consignment_id));
             
             if (!is_wp_error($response)) {
                 $data = json_decode(wp_remote_retrieve_body($response), true);
@@ -694,7 +688,7 @@ class Guardify_SteadFast {
             $body['reason'] = $reason;
         }
 
-        $response = $this->api_request('create_return_request', $body, 'POST');
+        $response = $this->courier_request('return', $body);
         
         if (is_wp_error($response)) {
             wp_send_json_error(array('message' => $response->get_error_message()));
@@ -803,7 +797,7 @@ class Guardify_SteadFast {
             'note' => $this->should_send_notes() ? $order->get_customer_note() : '',
         );
 
-        $response = $this->api_request('create_order', $body, 'POST');
+        $response = $this->courier_request('send', $body);
         
         if (is_wp_error($response)) {
             return $response->get_error_message();
@@ -831,30 +825,25 @@ class Guardify_SteadFast {
     }
 
     /**
-     * Make API request to SteadFast
+     * Make API request via TansiqLabs courier proxy.
+     * Credentials are stored on TansiqLabs — plugin sends only its site API key.
      */
-    private function api_request(string $endpoint, array $body = array(), string $method = 'POST') {
-        $args = array(
-            'method' => $method,
-            'headers' => array(
-                'Content-Type' => 'application/json',
-                'Api-Key' => $this->get_api_key(),
-                'Secret-Key' => $this->get_secret_key(),
-            ),
-            'timeout' => 45,
+    private function courier_request(string $action, array $body = array()) {
+        $site_api_key = $this->get_site_api_key();
+        if (empty($site_api_key)) {
+            return new \WP_Error('no_api_key', __('Site API key not configured. Activate your license first.', 'guardify'));
+        }
+
+        $body['api_key'] = $site_api_key;
+
+        return wp_remote_post(
+            self::COURIER_API_URL . $action,
+            array(
+                'headers' => array('Content-Type' => 'application/json'),
+                'body'    => wp_json_encode($body),
+                'timeout' => 45,
+            )
         );
-
-        if (!empty($body) && $method === 'POST') {
-            $args['body'] = wp_json_encode($body);
-        }
-
-        $url = self::API_BASE_URL . $endpoint;
-        
-        if ($method === 'GET') {
-            return wp_remote_get($url, $args);
-        }
-        
-        return wp_remote_post($url, $args);
     }
 
     /**

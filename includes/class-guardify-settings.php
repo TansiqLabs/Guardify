@@ -2009,16 +2009,11 @@ class Guardify_Settings {
                 update_option('guardify_site_api_key', sanitize_text_field($data['site_api_key']));
             }
             
-            // Sync Steadfast config from server — credentials managed on TansiqLabs console
+            // Sync Steadfast enabled/disabled status — credentials stay on TansiqLabs server
             if (!empty($data['steadfast']) && !empty($data['steadfast']['api_key'])) {
-                update_option('guardify_steadfast_api_key', sanitize_text_field($data['steadfast']['api_key']));
-                update_option('guardify_steadfast_secret_key', sanitize_text_field($data['steadfast']['secret_key']));
                 update_option('guardify_steadfast_enabled', '1');
             } else {
-                // Steadfast disabled or removed on console — clear local config
                 update_option('guardify_steadfast_enabled', '0');
-                delete_option('guardify_steadfast_api_key');
-                delete_option('guardify_steadfast_secret_key');
             }
             
             return array('success' => true, 'license' => $data['license']);
@@ -2054,8 +2049,6 @@ class Guardify_Settings {
     public function render_steadfast_page() {
         // Get SteadFast settings — API keys come from TansiqLabs console, not local input
         $sf_enabled = get_option('guardify_steadfast_enabled', '0');
-        $sf_api_key = get_option('guardify_steadfast_api_key', '');
-        $sf_secret_key = get_option('guardify_steadfast_secret_key', '');
         $sf_send_notes = get_option('guardify_steadfast_send_notes', '0');
         $sf_business_name = get_option('guardify_steadfast_business_name', get_bloginfo('name'));
         $sf_business_address = get_option('guardify_steadfast_business_address', '');
@@ -2105,13 +2098,13 @@ class Guardify_Settings {
                         </h2>
                     </div>
                     <div class="guardify-card-content">
-                        <?php if (!empty($sf_api_key)): ?>
+                        <?php if ($sf_enabled === '1'): ?>
                             <div class="guardify-info-box guardify-info-success" style="margin-bottom: 20px;">
                                 <span class="dashicons dashicons-yes-alt" style="color: #059669;"></span>
                                 <div>
                                     <strong><?php _e('SteadFast Connected', 'guardify'); ?></strong>
                                     <p style="margin: 4px 0 0; color: #666; font-size: 13px;">
-                                        <?php _e('API credentials are synced from your TansiqLabs console. Manage them at', 'guardify'); ?>
+                                        <?php _e('Courier API calls are securely routed through TansiqLabs. Manage credentials at', 'guardify'); ?>
                                         <a href="https://tansiqlabs.com/console/apps/guardify/sites" target="_blank" style="color: #0d9488; font-weight: 600;">tansiqlabs.com/console</a>
                                     </p>
                                 </div>
@@ -2134,7 +2127,7 @@ class Guardify_Settings {
                             <tr>
                                 <th scope="row"><?php _e('Status', 'guardify'); ?></th>
                                 <td>
-                                    <?php if (!empty($sf_api_key)): ?>
+                                    <?php if ($sf_enabled === '1'): ?>
                                         <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: #ecfdf5; color: #059669; border-radius: 6px; font-size: 13px; font-weight: 600;">
                                             <span class="dashicons dashicons-yes-alt" style="font-size: 16px; width: 16px; height: 16px;"></span>
                                             <?php _e('Active & Synced', 'guardify'); ?>
@@ -2147,7 +2140,7 @@ class Guardify_Settings {
                                     <?php endif; ?>
                                 </td>
                             </tr>
-                            <?php if (!empty($sf_api_key)): ?>
+                            <?php if ($sf_enabled === '1'): ?>
                             <tr>
                                 <th scope="row"><?php _e('Balance Check', 'guardify'); ?></th>
                                 <td>
