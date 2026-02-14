@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.6 — Fix: show courier stats when local meta missing
+
+### Fixed
+- Order list `Score` column could show `0 / 0 / 0%` when courier history existed in the TansiqLabs Console but there was no local courier meta. Guardify now falls back to the TansiqLabs `fraud-check` courier summary for the billing phone (cached 10 minutes) so `TOTAL` / `DELIVERED` / `RETURNED` reflect courier history.
+
+### Notes
+- This is a non-breaking patch and does not change stored order meta — it only augments the admin display.
+
+---
+
 ## v1.0.5 — Steadfast courier (display + docs)
 
 ### Changed

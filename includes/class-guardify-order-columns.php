@@ -529,7 +529,61 @@ class Guardify_Order_Columns {
             if ($stats['courier_returned'] > 0) {
                 $stats['returned'] = max($stats['returned'], $stats['courier_returned']);
             }
-            
+
+            // FALLBACK: if local courier meta is missing (or total is zero), try
+            // fetching aggregated courier history from TansiqLabs (fraud-check API).
+            // This covers sites where courier history is available server-side but
+            // not stored locally — results are cached for 10 minutes.
+            if ((($stats['courier_delivered'] === 0 && $stats['courier_returned'] === 0) || $stats['total'] === 0)) {
+                $trans_key = 'guardify_oc_courier_' . md5($cache_key);
+                $cached_cf = get_transient($trans_key);
+
+                if ($cached_cf === false) {
+                    $api_key = get_option('guardify_site_api_key', '') ?: get_option('guardify_api_key', '');
+                    if (!empty($api_key)) {
+                        $resp = wp_remote_post('https://tansiqlabs.com/api/guardify/fraud-check', array(
+                            'timeout' => 8,
+                            'headers' => array('Content-Type' => 'application/json'),
+                            'body'    => wp_json_encode(array('api_key' => $api_key, 'phone' => $phone)),
+                        ));
+
+                        if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200) {
+                            $body = json_decode(wp_remote_retrieve_body($resp), true);
+                            if (!empty($body['success']) && !empty($body['courier'])) {
+                                $cf = $body['courier'];
+                                $cached_cf = array(
+                                    'totalParcels' => intval($cf['totalParcels'] ?? 0),
+                                    'totalDelivered' => intval($cf['totalDelivered'] ?? 0),
+                                    'totalCancelled' => intval($cf['totalCancelled'] ?? 0),
+                                    'successRate' => intval($cf['successRate'] ?? 0),
+                                );
+                                set_transient($trans_key, $cached_cf, 600); // 10 minutes
+                            } else {
+                                // cache negative result short-term to avoid repeated calls
+                                set_transient($trans_key, array('empty' => true), 300);
+                                $cached_cf = array();
+                            }
+                        } else {
+                            set_transient($trans_key, array('empty' => true), 300);
+                            $cached_cf = array();
+                        }
+                    }
+                }
+
+                if (!empty($cached_cf) && empty($cached_cf['empty'])) {
+                    $stats['courier_delivered'] = max($stats['courier_delivered'], intval($cached_cf['totalDelivered'] ?? 0));
+                    $stats['courier_returned']  = max($stats['courier_returned'], intval($cached_cf['totalCancelled'] ?? 0));
+                    $stats['total'] = max($stats['total'], intval($cached_cf['totalParcels'] ?? 0));
+
+                    // prefer courier counts for delivered/returned when present
+                    if ($stats['courier_delivered'] > 0) {
+                        $stats['delivered'] = max($stats['delivered'], $stats['courier_delivered']);
+                    }
+                    if ($stats['courier_returned'] > 0) {
+                        $stats['returned'] = max($stats['returned'], $stats['courier_returned']);
+                    }
+                }
+            }
         } catch (Exception $e) {
             // Return empty stats on error
         }
