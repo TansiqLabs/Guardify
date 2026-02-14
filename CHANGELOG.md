@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.5 — Steadfast courier (display + docs)
+
+### Changed
+- Guardify UI will now display Steadfast courier delivery/cancellation stats when TansiqLabs provides global Steadfast credentials (server-side fallback). This fixes cases where courier history showed 0 despite Steadfast reporting deliveries.
+- Documentation: clarified Steadfast environment variables and `.env.example` in the TansiqLabs repo (used as universal fallback for fraud checks).
+
+### Notes
+- No functional plugin code changes were required — the fix was implemented on the TansiqLabs API side and the plugin will now surface courier data when the console is configured.
+
+---
+
 ## v1.0.4 — Universal Fraud Intelligence
 
 ### Added

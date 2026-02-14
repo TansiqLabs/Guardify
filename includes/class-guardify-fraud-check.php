@@ -280,6 +280,7 @@ class Guardify_Fraud_Check {
         $signals = $result['signals'] ?? [];
         $summary = $result['summary'] ?? [];
         $history = $result['history'] ?? [];
+        $courier = $result['courier'] ?? [];
 
         $risk_labels = [
             'low'      => 'Low Risk',
@@ -315,6 +316,46 @@ class Guardify_Fraud_Check {
                 <?php echo esc_html($label); ?>
             </div>
             <div class="guardify-fc-phone"><?php echo esc_html($phone); ?></div>
+
+            <!-- Courier Delivery Stats -->
+            <?php
+            $c_parcels   = intval($courier['totalParcels'] ?? 0);
+            $c_delivered  = intval($courier['totalDelivered'] ?? 0);
+            $c_cancelled  = intval($courier['totalCancelled'] ?? 0);
+            $c_success    = intval($courier['successRate'] ?? 0);
+            $c_cancel_rate = intval($courier['cancellationRate'] ?? 0);
+            ?>
+            <div class="guardify-fc-courier">
+                <h4 class="guardify-fc-section-title">📦 Courier History (Steadfast)</h4>
+                <div class="guardify-fc-courier-stats">
+                    <div class="guardify-fc-courier-stat">
+                        <span class="guardify-fc-courier-val"><?php echo $c_parcels; ?></span>
+                        <span class="guardify-fc-courier-lbl">Total</span>
+                    </div>
+                    <div class="guardify-fc-courier-stat">
+                        <span class="guardify-fc-courier-val" style="color:#22c55e"><?php echo $c_delivered; ?></span>
+                        <span class="guardify-fc-courier-lbl">Delivered</span>
+                    </div>
+                    <div class="guardify-fc-courier-stat">
+                        <span class="guardify-fc-courier-val" style="color:<?php echo $c_cancelled > 0 ? '#ef4444' : '#71717a'; ?>"><?php echo $c_cancelled; ?></span>
+                        <span class="guardify-fc-courier-lbl">Cancelled</span>
+                    </div>
+                    <div class="guardify-fc-courier-stat">
+                        <span class="guardify-fc-courier-val" style="color:<?php echo $c_success >= 80 ? '#22c55e' : ($c_success >= 50 ? '#f59e0b' : '#ef4444'); ?>"><?php echo $c_success; ?>%</span>
+                        <span class="guardify-fc-courier-lbl">Success</span>
+                    </div>
+                </div>
+                <?php if ($c_parcels > 0): ?>
+                    <div class="guardify-fc-courier-bar">
+                        <?php if ($c_delivered > 0): ?>
+                            <div class="guardify-fc-courier-bar-fill guardify-fc-courier-bar-delivered" style="width:<?php echo $c_success; ?>%" title="<?php echo $c_delivered; ?> delivered"></div>
+                        <?php endif; ?>
+                        <?php if ($c_cancelled > 0): ?>
+                            <div class="guardify-fc-courier-bar-fill guardify-fc-courier-bar-cancelled" style="width:<?php echo $c_cancel_rate; ?>%" title="<?php echo $c_cancelled; ?> cancelled"></div>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
 
             <!-- Quick stats -->
             <div class="guardify-fc-stats">

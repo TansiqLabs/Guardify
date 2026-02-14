@@ -99,6 +99,76 @@
     letter-spacing: 0.02em;
 }
 
+/* ── Courier Delivery Stats ─────────────────────────────────── */
+.guardify-fc-courier {
+    width: 100%;
+    margin-top: 8px;
+    padding: 12px;
+    border-radius: 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+}
+
+.guardify-fc-courier .guardify-fc-section-title {
+    margin-bottom: 10px;
+}
+
+.guardify-fc-courier-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    width: 100%;
+}
+
+.guardify-fc-courier-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 8px 4px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid #e4e4e7;
+}
+
+.guardify-fc-courier-val {
+    font-size: 16px;
+    font-weight: 700;
+    color: #09090b;
+    font-variant-numeric: tabular-nums;
+}
+
+.guardify-fc-courier-lbl {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #a1a1aa;
+}
+
+.guardify-fc-courier-bar {
+    display: flex;
+    height: 6px;
+    border-radius: 9999px;
+    overflow: hidden;
+    background: #e4e4e7;
+    margin-top: 10px;
+    width: 100%;
+}
+
+.guardify-fc-courier-bar-fill {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.guardify-fc-courier-bar-delivered {
+    background: #22c55e;
+}
+
+.guardify-fc-courier-bar-cancelled {
+    background: #ef4444;
+}
+
 /* ── Quick Stats ────────────────────────────────────────────── */
 .guardify-fc-stats {
     display: grid;
@@ -367,5 +437,11 @@ details[open] > .guardify-fc-toggle::before {
     }
     .guardify-fc-stat-val {
         font-size: 15px;
+    }
+    .guardify-fc-courier-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .guardify-fc-courier-val {
+        font-size: 14px;
     }
 }
