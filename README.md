@@ -1,6 +1,6 @@
 # Guardify — Fraud prevention for WooCommerce
 
-**Version:** 1.0.5
+**Version:** 1.0.7
 **Requirements:** PHP 8.0+, WordPress 6.0+, WooCommerce 8.0+
 
 Guardify provides essential fraud-protection tailored for Bangladesh e‑commerce: BD phone validation, phone/IP cooldowns, VPN/proxy detection, address/name checks, device fingerprinting, blocklists, SteadFast courier helpers, and a compact admin UI.

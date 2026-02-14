@@ -42,6 +42,9 @@ class Guardify_Fraud_Check {
         // AJAX handler for on-demand fraud check
         add_action('wp_ajax_guardify_fraud_check', [$this, 'ajax_fraud_check']);
 
+        // AJAX handler for bulk fraud score update (old orders)
+        add_action('wp_ajax_guardify_bulk_fraud_update', [$this, 'ajax_bulk_fraud_update']);
+
         // Enqueue
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
 
@@ -54,6 +57,10 @@ class Guardify_Fraud_Check {
         // Auto fraud check on new orders (universal fraud intelligence)
         add_action('woocommerce_new_order', [$this, 'auto_fraud_check_on_new_order'], 20, 2);
         add_action('woocommerce_checkout_order_created', [$this, 'auto_fraud_check_on_new_order'], 20, 2);
+
+        // Add bulk update button above orders table
+        add_action('manage_posts_extra_tablenav', [$this, 'render_bulk_update_button']);
+        add_action('woocommerce_order_list_table_extra_tablenav', [$this, 'render_bulk_update_button']);
     }
 
     // ── Meta Box ──────────────────────────────────────────────────────────
@@ -120,7 +127,9 @@ class Guardify_Fraud_Check {
             wp_send_json_error(['message' => 'Unauthorized']);
         }
 
-        $phone = sanitize_text_field($_POST['phone'] ?? '');
+        $phone    = sanitize_text_field($_POST['phone'] ?? '');
+        $order_id = intval($_POST['order_id'] ?? 0);
+
         if (empty($phone)) {
             wp_send_json_error(['message' => 'Phone number required']);
         }
@@ -134,6 +143,14 @@ class Guardify_Fraud_Check {
         // Cache
         $this->cache_result($phone, $result);
 
+        $score = intval($result['score'] ?? 0);
+        $risk  = $result['risk'] ?? 'low';
+
+        // Persist to order meta if order_id provided
+        if ($order_id > 0) {
+            $this->save_score_to_order($order_id, $score, $risk);
+        }
+
         // Return rendered HTML for the meta box
         ob_start();
         $this->render_result_html($result, $phone);
@@ -141,8 +158,8 @@ class Guardify_Fraud_Check {
 
         wp_send_json_success([
             'html'  => $html,
-            'score' => $result['score'] ?? 0,
-            'risk'  => $result['risk'] ?? 'low',
+            'score' => $score,
+            'risk'  => $risk,
         ]);
     }
 
@@ -259,6 +276,163 @@ class Guardify_Fraud_Check {
         return $body;
     }
 
+    // ── Save Score to Order Meta ──────────────────────────────────────────
+
+    /**
+     * Persist fraud score/risk to WooCommerce order meta for long-term storage.
+     * This ensures the badge survives transient expiry.
+     */
+    private function save_score_to_order(int $order_id, int $score, string $risk): void {
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+
+        $order->update_meta_data('_guardify_fraud_score', $score);
+        $order->update_meta_data('_guardify_fraud_risk', $risk);
+        $order->update_meta_data('_guardify_fraud_checked_at', current_time('mysql'));
+        $order->save();
+    }
+
+    // ── Bulk Update Old Orders ────────────────────────────────────────────
+
+    /**
+     * AJAX handler: Bulk update fraud scores for orders missing scores.
+     * Processes a batch (default 10) per AJAX call for progress tracking.
+     */
+    public function ajax_bulk_fraud_update(): void {
+        check_ajax_referer('guardify_ajax_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+
+        $batch_size = intval($_POST['batch_size'] ?? 10);
+        $offset     = intval($_POST['offset'] ?? 0);
+        $mode       = sanitize_text_field($_POST['mode'] ?? 'missing'); // 'missing' or 'all'
+
+        // Find orders that need scoring
+        $args = [
+            'limit'   => $batch_size,
+            'offset'  => $offset,
+            'orderby' => 'ID',
+            'order'   => 'DESC',
+            'return'  => 'ids',
+        ];
+
+        if ($mode === 'missing') {
+            // Only orders without a fraud score
+            $args['meta_query'] = [
+                'relation' => 'OR',
+                [
+                    'key'     => '_guardify_fraud_score',
+                    'compare' => 'NOT EXISTS',
+                ],
+                [
+                    'key'   => '_guardify_fraud_score',
+                    'value' => '',
+                ],
+            ];
+        }
+
+        $order_ids = wc_get_orders($args);
+
+        // Get total count for progress
+        $count_args = $args;
+        $count_args['limit']  = -1;
+        $count_args['offset'] = 0;
+        unset($count_args['return']);
+        $count_args['return'] = 'ids';
+        $total_orders = count(wc_get_orders($count_args));
+
+        if (empty($order_ids)) {
+            wp_send_json_success([
+                'completed' => true,
+                'processed' => 0,
+                'updated'   => 0,
+                'failed'    => 0,
+                'total'     => $total_orders,
+                'message'   => 'All orders have been scored.',
+            ]);
+            return;
+        }
+
+        $updated = 0;
+        $failed  = 0;
+        $results = [];
+
+        foreach ($order_ids as $order_id) {
+            $order = wc_get_order($order_id);
+            if (!$order) {
+                $failed++;
+                continue;
+            }
+
+            $phone = $order->get_billing_phone();
+            if (empty($phone)) {
+                $failed++;
+                continue;
+            }
+
+            // Call API
+            $result = $this->fetch_fraud_score($phone);
+            if ($result === null || empty($result['success'])) {
+                $failed++;
+                continue;
+            }
+
+            $score = intval($result['score'] ?? 0);
+            $risk  = $result['risk'] ?? 'low';
+
+            // Save to order meta
+            $this->save_score_to_order($order_id, $score, $risk);
+
+            // Cache
+            $this->cache_result($phone, $result);
+
+            $updated++;
+            $results[] = [
+                'order_id' => $order_id,
+                'phone'    => $phone,
+                'score'    => $score,
+                'risk'     => $risk,
+            ];
+
+            // Small delay to avoid API rate limiting
+            usleep(200000); // 200ms
+        }
+
+        wp_send_json_success([
+            'completed' => count($order_ids) < $batch_size,
+            'processed' => count($order_ids),
+            'updated'   => $updated,
+            'failed'    => $failed,
+            'total'     => $total_orders,
+            'offset'    => $offset + count($order_ids),
+            'results'   => $results,
+            'message'   => sprintf('Processed %d orders: %d updated, %d failed.', count($order_ids), $updated, $failed),
+        ]);
+    }
+
+    /**
+     * Render bulk update button above the orders table
+     */
+    public function render_bulk_update_button($which = ''): void {
+        $screen = get_current_screen();
+        if (!$screen) return;
+        
+        // Only show on order list pages
+        $valid_screens = ['edit-shop_order', 'woocommerce_page_wc-orders'];
+        if (!in_array($screen->id, $valid_screens, true)) return;
+        
+        // Only show on top tablenav
+        if ($which !== 'top' && $which !== '') return;
+        ?>
+        <button type="button" id="guardify-bulk-fraud-update" class="button" style="margin-left: 8px;" title="Update fraud scores for all orders">
+            🛡️ Update All Scores
+        </button>
+        <span id="guardify-bulk-fraud-progress" style="display:none; margin-left: 8px; font-size: 12px; color: #666;"></span>
+        <?php
+    }
+
     // ── Cache ─────────────────────────────────────────────────────────────
 
     private function cache_result(string $phone, array $result): void {
@@ -317,6 +491,15 @@ class Guardify_Fraud_Check {
             </div>
             <div class="guardify-fc-phone"><?php echo esc_html($phone); ?></div>
 
+            <!-- Verdict Summary -->
+            <?php $verdict = $summary['verdict'] ?? ''; ?>
+            <?php if (!empty($verdict)): ?>
+                <div class="guardify-fc-verdict" style="background:<?php echo esc_attr($color); ?>10;border:1px solid <?php echo esc_attr($color); ?>30;border-radius:8px;padding:10px 14px;margin:8px 0 12px;font-size:13px;line-height:1.5;color:#374151">
+                    <strong style="color:<?php echo esc_attr($color); ?>">⚡ Verdict:</strong>
+                    <?php echo esc_html($verdict); ?>
+                </div>
+            <?php endif; ?>
+
             <!-- Courier Delivery Stats -->
             <?php
             $c_parcels   = intval($courier['totalParcels'] ?? 0);
@@ -326,7 +509,11 @@ class Guardify_Fraud_Check {
             $c_cancel_rate = intval($courier['cancellationRate'] ?? 0);
             ?>
             <div class="guardify-fc-courier">
-                <h4 class="guardify-fc-section-title">📦 Courier History (Steadfast)</h4>
+                <?php
+                $c_sources = $courier['sources'] ?? [];
+                $source_names = !empty($c_sources) ? implode(', ', array_map(function($s) { return $s['provider'] ?? ''; }, $c_sources)) : 'No Courier';
+                ?>
+                <h4 class="guardify-fc-section-title">📦 Courier History (<?php echo esc_html($source_names); ?>)</h4>
                 <div class="guardify-fc-courier-stats">
                     <div class="guardify-fc-courier-stat">
                         <span class="guardify-fc-courier-val"><?php echo $c_parcels; ?></span>
@@ -479,17 +666,29 @@ class Guardify_Fraud_Check {
             return;
         }
 
-        $cached = $this->get_cached_result($phone);
-        if (!$cached) {
-            echo '<span class="guardify-fc-badge guardify-fc-badge--pending" title="Click to check" data-phone="' . esc_attr($phone) . '">?</span>';
+        // Priority 1: Persistent order meta (survives transient expiry)
+        $meta_score = $order->get_meta('_guardify_fraud_score');
+        $meta_risk  = $order->get_meta('_guardify_fraud_risk');
+        if ($meta_score !== '' && $meta_score !== false) {
+            $score = intval($meta_score);
+            $risk  = !empty($meta_risk) ? $meta_risk : 'low';
+            $title = ucfirst($risk) . ' Risk — Score: ' . $score . '/100';
+            echo '<span class="guardify-fc-badge guardify-fc-badge--' . esc_attr($risk) . '" title="' . esc_attr($title) . '">' . esc_html($score) . '</span>';
             return;
         }
 
-        $score = intval($cached['score'] ?? 0);
-        $risk  = $cached['risk'] ?? 'low';
-        $title = ucfirst($risk) . ' Risk — Score: ' . $score . '/100';
+        // Priority 2: Transient cache (short-lived)
+        $cached = $this->get_cached_result($phone);
+        if ($cached) {
+            $score = intval($cached['score'] ?? 0);
+            $risk  = $cached['risk'] ?? 'low';
+            $title = ucfirst($risk) . ' Risk — Score: ' . $score . '/100';
+            echo '<span class="guardify-fc-badge guardify-fc-badge--' . esc_attr($risk) . '" title="' . esc_attr($title) . '">' . esc_html($score) . '</span>';
+            return;
+        }
 
-        echo '<span class="guardify-fc-badge guardify-fc-badge--' . esc_attr($risk) . '" title="' . esc_attr($title) . '">' . esc_html($score) . '</span>';
+        // Priority 3: Not checked yet
+        echo '<span class="guardify-fc-badge guardify-fc-badge--pending" title="Click to check" data-phone="' . esc_attr($phone) . '" data-order-id="' . esc_attr($order->get_id()) . '">?</span>';
     }
 
     // ── Assets ────────────────────────────────────────────────────────────

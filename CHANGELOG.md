@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.7 — Patch: persist scores, bulk update, verdict & admin UI
+
+### Fixed
+- Persisted fraud `score`/`risk` to order meta so scores appear on the WooCommerce Orders page.
+- `render_fraud_badge()` now prefers stored order meta over transient cache.
+- AJAX `fraud-check` now saves scores to order meta (prevents transient-only loss).
+
+### Added
+- Bulk-update admin action to backfill scores for old orders (batched processing with progress UI).
+- `verdict` summary shown in the order meta box.
+- UI shows courier `sources` when multiple courier providers are available.
+
+### Notes
+- Backwards-compatible patch; no DB schema changes. Works with the TansiqLabs Console multi-courier API.
+
+---
+
 ## v1.0.6 — Fix: show courier stats when local meta missing
 
 ### Fixed
