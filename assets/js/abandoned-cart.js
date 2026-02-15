@@ -394,8 +394,9 @@
      * Initialize event listeners
      */
     function initEventListeners() {
-        // ─── IMMEDIATE: Send page_load capture with browser data ───
-        // Creates an incomplete order right away (even with zero form data)
+        // ─── WARM UP: Send page_load to pre-validate nonce (no order created) ───
+        // Server returns immediately without DB write if no form data filled.
+        // This warms the nonce and verifies the AJAX endpoint is reachable.
         sendCapture('page_load');
 
         // ─── Try to bind form Events ───

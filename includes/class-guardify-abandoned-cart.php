@@ -268,8 +268,20 @@ class Guardify_Abandoned_Cart {
         // Sanitize input fields
         $data = $this->sanitize_checkout_data($_POST);
 
-        // No phone/email requirement — we create incomplete orders immediately
-        // with browser data alone (IP, user agent, referrer, screen etc.)
+        // ── PERFORMANCE FIX: Skip order creation on page_load with zero form data ──
+        // page_load fires every checkout visit. Creating a WC order (DB write + cart loop)
+        // on every visit is extremely heavy. Only create an order once user interacts.
+        $trigger = $data['_capture_trigger'] ?? 'page_load';
+        $has_identity = !empty($data['billing_phone']) || !empty($data['billing_email']) || !empty($data['billing_first_name']);
+
+        if ($trigger === 'page_load' && !$has_identity) {
+            wp_send_json_success([
+                'draft_id'  => 0,
+                'message'   => 'Page load captured (no order created yet)',
+                'new_nonce' => wp_create_nonce('guardify_capture_checkout'),
+            ]);
+            return;
+        }
 
         // Get or create draft order
         $order_id = $this->get_or_create_draft_order($data);

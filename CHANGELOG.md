@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.1.2 — Speed Fix + Discord Moved to Console
+
+### Performance
+- **Eliminated page_load order creation:** Previously, every checkout page visit created a full WooCommerce order (DB write + cart item loop) even with zero form data. Now the server returns immediately without any database write on `page_load`. Orders are only created once the customer starts filling in fields (phone, email, or name).
+- **Removed Discord class from plugin:** The `Guardify_Discord` class made a blocking 8-second API call to fetch fraud scores on every identified order. Discord notifications are now handled server-side by the TansiqLabs Console — zero impact on WooCommerce page speed.
+
+### Changed
+- **Discord Integration moved to TansiqLabs Console:** Discord webhook settings and notifications are no longer in the WordPress plugin. Configure Discord in your TansiqLabs Console dashboard instead. This eliminates all blocking HTTP calls from the plugin.
+
+### Removed
+- Discord settings submenu page from WordPress admin
+- Discord class loading and default options from plugin activation
+- All Discord-related save logic from settings handler
+
+### Fixed
+- **Incomplete Order Capture:** Fixed the root issue — `page_load` captures no longer create empty junk orders that clutter the orders list. Real incomplete orders only appear when a customer actually interacts with the checkout form.
+
+### Technical
+- Updated: `guardify.php` — Version bump, removed Discord class loading and default options
+- Updated: `includes/class-guardify-settings.php` — Removed Discord submenu, save logic, and render page
+- Updated: `includes/class-guardify-abandoned-cart.php` — Skip order creation on page_load with no form data
+- Updated: `assets/js/abandoned-cart.js` — page_load now only warms the nonce (no order created)
+
 ## v1.1.1 — Discord Save Fix + Abandoned Cart Robustness
 
 ### Fixed
