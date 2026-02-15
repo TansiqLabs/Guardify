@@ -62,6 +62,10 @@ class Guardify_Abandoned_Cart {
         add_action('wp_ajax_guardify_capture_checkout', [$this, 'ajax_capture_checkout']);
         add_action('wp_ajax_nopriv_guardify_capture_checkout', [$this, 'ajax_capture_checkout']);
 
+        // ─── AJAX: Nonce refresh (for cached checkout pages) ───
+        add_action('wp_ajax_guardify_refresh_nonce', [$this, 'ajax_refresh_nonce']);
+        add_action('wp_ajax_nopriv_guardify_refresh_nonce', [$this, 'ajax_refresh_nonce']);
+
         // ─── Frontend scripts on checkout pages ───
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
 
@@ -204,7 +208,36 @@ class Guardify_Abandoned_Cart {
             }
         }
 
+        // Fallback: detect checkout-like pages by shortcode or page content
+        // This covers custom checkout builders (Elementor Pro, Divi, etc.)
+        global $post;
+        if ($post && is_a($post, 'WP_Post')) {
+            // Check for WooCommerce checkout shortcode
+            if (has_shortcode($post->post_content, 'woocommerce_checkout')) {
+                return true;
+            }
+            // Check if current page IS the WooCommerce checkout page by ID
+            $checkout_page_id = wc_get_page_id('checkout');
+            if ($checkout_page_id && $post->ID == $checkout_page_id) {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    /**
+     * AJAX endpoint: Refresh the nonce
+     * Used when LiteSpeed/Varnish serves a cached checkout page with a stale nonce.
+     * This endpoint doesn't require a nonce itself (it generates one).
+     */
+    public function ajax_refresh_nonce(): void {
+        // LiteSpeed: don't cache this
+        do_action('litespeed_control_set_nocache', 'guardify nonce refresh');
+
+        wp_send_json_success([
+            'nonce' => wp_create_nonce('guardify_capture_checkout'),
+        ]);
     }
 
     // =========================================================================
@@ -250,8 +283,9 @@ class Guardify_Abandoned_Cart {
         $this->update_draft_order($order_id, $data);
 
         wp_send_json_success([
-            'draft_id' => $order_id,
-            'message'  => 'Checkout data captured',
+            'draft_id'  => $order_id,
+            'message'   => 'Checkout data captured',
+            'new_nonce' => wp_create_nonce('guardify_capture_checkout'),
         ]);
     }
 

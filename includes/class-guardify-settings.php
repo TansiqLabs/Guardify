@@ -2917,9 +2917,8 @@ class Guardify_Settings {
                 </div>
             <?php endif; ?>
 
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px;">
-                <input type="hidden" name="action" value="guardify_save_settings">
-                <?php wp_nonce_field('guardify_settings_nonce', 'guardify_nonce'); ?>
+            <form method="post" action="" style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px;">
+                <?php wp_nonce_field('guardify_settings'); ?>
                 <input type="hidden" name="guardify_save_settings" value="1">
 
                 <table class="form-table" role="presentation">

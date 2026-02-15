@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.1 — Discord Save Fix + Abandoned Cart Robustness
+
+### Fixed
+- **Discord Settings "Link Expired" Error:** Fixed nonce mismatch on the Discord settings page that caused "The link you followed has expired" when saving settings. The form was posting to `admin-post.php` with a different nonce action/field than expected by the save handler. Now uses the same pattern as all other Guardify settings pages.
+
+### Improved
+- **Abandoned Cart — Nonce Refresh for Cached Pages:** If LiteSpeed Cache (or any full-page cache) serves a cached checkout page with a stale nonce, the JS now automatically detects the 403 failure and refreshes the nonce via a lightweight AJAX call, then retries the capture. Every successful capture response also returns a fresh nonce for subsequent calls.
+- **Abandoned Cart — Better Checkout Page Detection:** Added fallback detection via `woocommerce_checkout` shortcode and WooCommerce checkout page ID check. This covers Elementor Pro, Divi, and other page builders where `is_checkout()` might return false.
+- **Abandoned Cart — MutationObserver for Dynamic Forms:** Instead of a single 2-second timeout, the JS now uses `MutationObserver` to watch for dynamically rendered checkout forms (CartFlows, block checkout, page builders). Falls back to multiple retry attempts at 1s, 2s, 4s, and 7s for browsers without MutationObserver.
+- **New AJAX Endpoint:** `guardify_refresh_nonce` — lightweight endpoint that generates a fresh nonce without any security requirement (since it only creates a nonce, not consumes one).
+
+### Technical
+- Updated: `includes/class-guardify-settings.php` — Discord form nonce fix
+- Updated: `includes/class-guardify-abandoned-cart.php` — Nonce refresh endpoint, improved `is_checkout_page()`, fresh nonce in capture response
+- Updated: `assets/js/abandoned-cart.js` — Nonce refresh on 403, MutationObserver form detection, retry logic
+
 ## v1.1.0 — Instant Capture + Discord Notifications + Custom Fields
 
 ### Added

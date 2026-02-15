@@ -38,6 +38,9 @@
     var isSending = false;
     var initialCaptureSent = false; // Track if the page-load capture was sent
     var formSubmitting = false;
+    var formBound = false; // Track if form events have been bound
+    var currentNonce = config.nonce; // Live nonce (can be refreshed)
+    var nonceRefreshAttempted = false; // Only try once
 
     // =========================================================================
     // BROWSER METADATA COLLECTION
@@ -91,7 +94,7 @@
     function collectFormData() {
         var data = {
             action: 'guardify_capture_checkout',
-            nonce: config.nonce,
+            nonce: currentNonce,
             draft_id: draftId,
             capture_url: window.location.href,
             capture_trigger: 'field_blur'
@@ -204,6 +207,7 @@
     /**
      * Send captured data to server via AJAX
      * Uses admin-ajax.php — NEVER cached by LiteSpeed (even aggressive preset)
+     * Includes nonce refresh if page was served from cache (stale nonce)
      */
     function sendCapture(trigger) {
         if (formSubmitting || isSending) {
@@ -238,13 +242,52 @@
                     draftId = response.data.draft_id;
                     initialCaptureSent = true;
                 }
+                // If server returned a fresh nonce, use it
+                if (response && response.data && response.data.new_nonce) {
+                    currentNonce = response.data.new_nonce;
+                }
             },
-            error: function () {
+            error: function (xhr) {
+                // If 403 (nonce expired — likely cached page), try to refresh nonce
+                if (xhr.status === 403 && !nonceRefreshAttempted) {
+                    nonceRefreshAttempted = true;
+                    refreshNonce(function () {
+                        lastCapturedData = ''; // Allow retry
+                        isSending = false;
+                        sendCapture(trigger); // Retry with fresh nonce
+                    });
+                    return;
+                }
                 // Silent fail — don't disrupt checkout
                 lastCapturedData = ''; // Allow retry on next change
             },
             complete: function () {
                 isSending = false;
+            }
+        });
+    }
+
+    /**
+     * Refresh the nonce via a lightweight AJAX call
+     * This is needed when LiteSpeed/Varnish serves a cached checkout page
+     * with a stale nonce embedded in the localized script data
+     */
+    function refreshNonce(callback) {
+        $.ajax({
+            url: config.ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'guardify_refresh_nonce'
+            },
+            timeout: 5000,
+            success: function (response) {
+                if (response && response.success && response.data && response.data.nonce) {
+                    currentNonce = response.data.nonce;
+                }
+                if (typeof callback === 'function') callback();
+            },
+            error: function () {
+                if (typeof callback === 'function') callback();
             }
         });
     }
@@ -328,6 +371,26 @@
     }
 
     /**
+     * Form selector string (WooCommerce, CartFlows, Block Checkout)
+     */
+    var FORM_SELECTOR = 'form.checkout, form.woocommerce-checkout, .wcf-checkout-form, #wcf-embed-checkout-form, .wc-block-checkout';
+
+    /**
+     * Try to find and bind checkout form. Returns true if form was found and bound.
+     */
+    function tryBindForm() {
+        if (formBound) return true;
+
+        var $form = $(FORM_SELECTOR);
+        if ($form.length > 0) {
+            bindFormEvents($form);
+            formBound = true;
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Initialize event listeners
      */
     function initEventListeners() {
@@ -335,18 +398,33 @@
         // Creates an incomplete order right away (even with zero form data)
         sendCapture('page_load');
 
-        var $form = $('form.checkout, form.woocommerce-checkout, .wcf-checkout-form, #wcf-embed-checkout-form, .wc-block-checkout');
+        // ─── Try to bind form Events ───
+        if (!tryBindForm()) {
+            // Delayed retries — CartFlows / page builders may render the form later
+            var retryDelays = [1000, 2000, 4000, 7000];
+            retryDelays.forEach(function (delay) {
+                setTimeout(function () {
+                    tryBindForm();
+                }, delay);
+            });
 
-        if ($form.length === 0) {
-            // Delayed retry — CartFlows may render the form after page load
-            setTimeout(function () {
-                $form = $('form.checkout, form.woocommerce-checkout, .wcf-checkout-form, #wcf-embed-checkout-form, .wc-block-checkout');
-                if ($form.length > 0) {
-                    bindFormEvents($form);
-                }
-            }, 2000);
-        } else {
-            bindFormEvents($form);
+            // MutationObserver — watch for dynamically added forms
+            if (typeof MutationObserver !== 'undefined') {
+                var observer = new MutationObserver(function (mutations) {
+                    if (tryBindForm()) {
+                        observer.disconnect(); // Stop watching once form is found
+                    }
+                });
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+
+                // Safety: disconnect observer after 30 seconds regardless
+                setTimeout(function () {
+                    observer.disconnect();
+                }, 30000);
+            }
         }
 
         // ─── Page visibility change (tab switch) ───
