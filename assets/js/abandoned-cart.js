@@ -40,7 +40,7 @@
     var formSubmitting = false;
     var formBound = false; // Track if form events have been bound
     var currentNonce = config.nonce; // Live nonce (can be refreshed)
-    var nonceRefreshAttempted = false; // Only try once
+    var lastNonceRefreshTime = 0; // Timestamp of last nonce refresh (allow multiple with cooldown)
 
     // =========================================================================
     // BROWSER METADATA COLLECTION
@@ -249,8 +249,10 @@
             },
             error: function (xhr) {
                 // If 403 (nonce expired — likely cached page), try to refresh nonce
-                if (xhr.status === 403 && !nonceRefreshAttempted) {
-                    nonceRefreshAttempted = true;
+                // Allow retry every 30 seconds (not just once)
+                var now = Date.now();
+                if (xhr.status === 403 && (now - lastNonceRefreshTime > 30000)) {
+                    lastNonceRefreshTime = now;
                     refreshNonce(function () {
                         lastCapturedData = ''; // Allow retry
                         isSending = false;

@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.1.3 — Incomplete Order Fix + WC Session Init
+
+### Fixed
+- **Incomplete Order Capture NOW WORKS:** Fixed the root cause — `admin-ajax.php` does not automatically load WooCommerce session/cart for non-logged-in users. Added explicit WC session initialization and cart loading in the AJAX handler so cart items are properly available when creating draft orders.
+- **Nonce refresh was one-shot:** Previously, if the first nonce refresh also resulted in an expired nonce (e.g., user sits on page for hours), all subsequent capture attempts failed silently forever. Now allows retry every 30 seconds with a cooldown instead of a single boolean flag.
+
+### Improved
+- Added `error_log()` calls in AJAX handler for draft order creation failures — makes production debugging possible.
+- Better validation: returns explicit error if `get_or_create_draft_order` returns 0/false.
+
+### Technical
+- Updated: `includes/class-guardify-abandoned-cart.php` — WC session/cart init in AJAX, error logging
+- Updated: `assets/js/abandoned-cart.js` — Cooldown-based nonce refresh (30s) replaces one-shot boolean
+
 ## v1.1.2 — Speed Fix + Discord Moved to Console
 
 ### Performance

@@ -258,12 +258,23 @@ class Guardify_Abandoned_Cart {
     public function ajax_capture_checkout(): void {
         // Verify nonce
         if (!check_ajax_referer('guardify_capture_checkout', 'nonce', false)) {
+            error_log('Guardify: Nonce verification failed for capture_checkout');
             wp_send_json_error(['message' => 'Invalid nonce'], 403);
             return;
         }
 
         // LiteSpeed: Explicitly tell LiteSpeed not to cache this response
         do_action('litespeed_control_set_nocache', 'guardify abandoned cart ajax');
+
+        // ── Ensure WC session & cart are available during AJAX ──
+        // admin-ajax.php does NOT automatically load WC session/cart for non-logged-in users.
+        // Without this, WC()->cart is null and no cart items get added to the draft order.
+        if (function_exists('WC') && WC()->session && !WC()->session->has_session()) {
+            WC()->session->set_customer_session_cookie(true);
+        }
+        if (function_exists('WC') && WC()->cart && !did_action('woocommerce_cart_loaded_from_session')) {
+            WC()->cart->get_cart();
+        }
 
         // Sanitize input fields
         $data = $this->sanitize_checkout_data($_POST);
@@ -287,7 +298,14 @@ class Guardify_Abandoned_Cart {
         $order_id = $this->get_or_create_draft_order($data);
 
         if (is_wp_error($order_id)) {
+            error_log('Guardify: Draft order creation failed — ' . $order_id->get_error_message());
             wp_send_json_error(['message' => $order_id->get_error_message()], 500);
+            return;
+        }
+
+        if (!$order_id) {
+            error_log('Guardify: get_or_create_draft_order returned 0/false — trigger=' . ($data['_capture_trigger'] ?? 'unknown'));
+            wp_send_json_error(['message' => 'Failed to create draft order'], 500);
             return;
         }
 
