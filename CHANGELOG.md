@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.1.0 — Instant Capture + Discord Notifications + Custom Fields
+
+### Added
+- **Immediate Incomplete Order Creation:** Incomplete orders are now created the instant a visitor lands on the checkout page — before they fill any form field. Browser metadata (device, screen, referrer, timezone, connection type) is captured immediately.
+- **Browser Metadata Capture:** Collects 20+ data points: user agent, screen/viewport size, language, timezone, platform, connection type, device memory, touch support, color depth, pixel ratio, and more.
+- **UTM / Campaign Parameter Tracking:** Automatically captures `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `fbclid`, and `gclid` from the checkout URL. Stored as order metadata and sent to Discord.
+- **Custom Checkout Field Capture:** Dynamically scans and captures ALL non-standard WooCommerce checkout fields (size, color, custom dropdowns, text fields etc.). Stored both as a JSON blob and as individual order meta entries for easy admin display.
+- **Discord Webhook Notifications:** New `Guardify_Discord` class sends rich embed messages to a Discord channel for:
+  - 🌐 **Visitor arriving** on checkout (browser-only data)
+  - 🟠 **Customer identified** (phone/email filled, includes fraud report)
+  - 🟢 **Order placed** (full order data + fraud report)
+  - 🚨 **Fraud block** (order auto-failed due to high fraud score)
+- **Discord Notification Content:** Each notification includes customer info, cart items, custom fields, browser/device details, UTM data, and a full fraud report (score, risk signals, verdict, courier delivery stats).
+- **Discord Settings Page:** New "Discord" submenu under Guardify with webhook URL, bot name, avatar URL, event toggles, and a test webhook button.
+- **Test Webhook Button:** One-click test to verify Discord webhook is working correctly from the admin settings page.
+
+### Changed
+- **No Phone/Email Requirement:** Incomplete orders are created immediately with just browser data. Previously required at least a phone or email to create the order.
+- **Broader Field Capture Triggers:** JS now captures blur/change events on ALL form fields (including custom fields like size, color), not just billing/shipping fields.
+- **sendBeacon Enhancement:** Page unload/tab switch captures now also include browser metadata and custom field data.
+- **Draft Deduplication:** Now also deduplicates by IP address for browser-only captures (no phone/email), preventing duplicate orders from the same visitor refreshing the page.
+- **Action Hooks:** Added `guardify_incomplete_order_created`, `guardify_incomplete_order_identified`, and `guardify_incomplete_order_updated` action hooks for extensibility.
+- **Updated trigger labels:** Added "Page Load" trigger label for immediate capture events.
+
+### Technical
+- New file: `includes/class-guardify-discord.php` — Discord webhook integration
+- Updated: `includes/class-guardify-abandoned-cart.php` — Immediate capture, browser metadata, custom fields, action hooks
+- Updated: `assets/js/abandoned-cart.js` — Page load capture, browser data collection, dynamic field scanning
+- Updated: `includes/class-guardify-settings.php` — Discord settings page and save logic
+- Updated: `guardify.php` — Discord class loader, default options, version bump to 1.1.0
+
 ## v1.0.9 — Incomplete Order Capture (Abandoned Cart)
 
 ### Added

@@ -40,6 +40,8 @@ class Guardify_Discord {
 
     private function __construct() {
         if (!$this->is_enabled()) {
+            // Still register test webhook handler even if disabled (so admin can test)
+            add_action('wp_ajax_guardify_test_discord', [$this, 'ajax_test_webhook']);
             return;
         }
 
@@ -52,6 +54,69 @@ class Guardify_Discord {
 
         // ─── Order status changes (completed, processing, failed) ───
         add_action('woocommerce_order_status_changed', [$this, 'on_status_changed'], 20, 4);
+
+        // ─── AJAX: Test webhook ───
+        add_action('wp_ajax_guardify_test_discord', [$this, 'ajax_test_webhook']);
+    }
+
+    /**
+     * AJAX handler: Send a test message to Discord webhook
+     */
+    public function ajax_test_webhook(): void {
+        check_ajax_referer('guardify_test_discord', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+            return;
+        }
+
+        $url = get_option('guardify_discord_webhook_url', '');
+        if (empty($url)) {
+            wp_send_json_error(['message' => 'Webhook URL সেট করা হয়নি। প্রথমে URL দিন এবং সেভ করুন।']);
+            return;
+        }
+
+        $site_name = get_bloginfo('name');
+        $payload = [
+            'username'   => get_option('guardify_discord_bot_name', 'Guardify'),
+            'embeds'     => [[
+                'title'       => '🧪 Guardify Test Message',
+                'description' => "This is a test notification from **{$site_name}**.\n\nIf you see this message, your Discord webhook is working correctly! ✅",
+                'color'       => 0x6366F1, // indigo
+                'timestamp'   => gmdate('c'),
+                'fields'      => [
+                    ['name' => '🌐 Site', 'value' => home_url(), 'inline' => true],
+                    ['name' => '🔌 Plugin', 'value' => 'Guardify v' . GUARDIFY_VERSION, 'inline' => true],
+                    ['name' => '👤 Tested by', 'value' => wp_get_current_user()->display_name, 'inline' => true],
+                ],
+                'footer' => [
+                    'text' => 'Guardify Discord Integration — Test',
+                ],
+            ]],
+        ];
+
+        $avatar = get_option('guardify_discord_bot_avatar', '');
+        if ($avatar) $payload['avatar_url'] = $avatar;
+
+        $response = wp_remote_post($url, [
+            'timeout'   => 10,
+            'headers'   => ['Content-Type' => 'application/json'],
+            'body'      => wp_json_encode($payload),
+            'sslverify' => true,
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_send_json_error(['message' => 'Error: ' . $response->get_error_message()]);
+            return;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code >= 200 && $code < 300) {
+            wp_send_json_success(['message' => 'টেস্ট মেসেজ সফলভাবে পাঠানো হয়েছে!']);
+        } else {
+            $body = wp_remote_retrieve_body($response);
+            wp_send_json_error(['message' => "Discord Error (HTTP {$code}): " . mb_substr($body, 0, 200)]);
+        }
     }
 
     // =========================================================================

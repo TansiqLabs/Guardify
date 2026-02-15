@@ -110,6 +110,15 @@ class Guardify_Settings {
             'guardify-abandoned-cart',
             array($this, 'render_abandoned_cart_page')
         );
+
+        add_submenu_page(
+            'guardify-settings',
+            __('Discord Notifications', 'guardify'),
+            __('Discord', 'guardify'),
+            'manage_options',
+            'guardify-discord',
+            array($this, 'render_discord_page')
+        );
     }
 
     /**
@@ -295,6 +304,30 @@ class Guardify_Settings {
         if (isset($_POST['guardify_abandoned_cart_retention_days'])) {
             update_option('guardify_abandoned_cart_retention_days', absint($_POST['guardify_abandoned_cart_retention_days']));
         }
+
+        // Discord Webhook Settings
+        update_option('guardify_discord_enabled', isset($_POST['guardify_discord_enabled']) ? '1' : '0');
+        if (isset($_POST['guardify_discord_webhook_url'])) {
+            update_option('guardify_discord_webhook_url', esc_url_raw($_POST['guardify_discord_webhook_url']));
+        }
+        if (isset($_POST['guardify_discord_bot_name'])) {
+            update_option('guardify_discord_bot_name', sanitize_text_field($_POST['guardify_discord_bot_name']));
+        }
+        if (isset($_POST['guardify_discord_bot_avatar'])) {
+            update_option('guardify_discord_bot_avatar', esc_url_raw($_POST['guardify_discord_bot_avatar']));
+        }
+        // Discord notification events (multiselect)
+        $discord_events = [];
+        if (isset($_POST['guardify_discord_events']) && is_array($_POST['guardify_discord_events'])) {
+            $allowed = ['incomplete', 'identified', 'new_order', 'fraud_block'];
+            foreach ($_POST['guardify_discord_events'] as $ev) {
+                $ev = sanitize_text_field($ev);
+                if (in_array($ev, $allowed, true)) {
+                    $discord_events[] = $ev;
+                }
+            }
+        }
+        update_option('guardify_discord_events', $discord_events);
 
         // SteadFast Courier Settings — API keys managed via TansiqLabs console, only save local settings
         update_option('guardify_steadfast_send_notes', isset($_POST['guardify_steadfast_send_notes']) ? '1' : '0');
@@ -2854,6 +2887,214 @@ class Guardify_Settings {
             </div>
             <?php endif; ?>
         </div>
+        <?php
+    }
+
+    // =========================================================================
+    // DISCORD NOTIFICATIONS SETTINGS PAGE
+    // =========================================================================
+
+    public function render_discord_page(): void {
+        $enabled     = get_option('guardify_discord_enabled', '0');
+        $webhook_url = get_option('guardify_discord_webhook_url', '');
+        $bot_name    = get_option('guardify_discord_bot_name', 'Guardify');
+        $bot_avatar  = get_option('guardify_discord_bot_avatar', '');
+        $events      = get_option('guardify_discord_events', ['incomplete', 'identified', 'new_order']);
+        if (!is_array($events)) $events = ['incomplete', 'identified', 'new_order'];
+        ?>
+        <div class="wrap" style="max-width: 900px;">
+            <h1 style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                <span style="font-size: 28px;">💬</span>
+                <?php _e('Discord Notifications', 'guardify'); ?>
+            </h1>
+            <p style="color: #666; margin-bottom: 25px;">
+                <?php _e('Discord webhook সেটআপ করুন — সব অর্ডার, incomplete ক্যাপচার, এবং fraud alert সরাসরি আপনার Discord channel এ পাবেন। Browser data, custom field (size, color), fraud report সবকিছু যাবে।', 'guardify'); ?>
+            </p>
+
+            <?php if (isset($_GET['settings-updated']) && $_GET['settings-updated'] === 'true'): ?>
+                <div class="notice notice-success is-dismissible" style="margin-bottom: 20px;">
+                    <p><strong>✅ <?php _e('Discord settings saved successfully!', 'guardify'); ?></strong></p>
+                </div>
+            <?php endif; ?>
+
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 25px;">
+                <input type="hidden" name="action" value="guardify_save_settings">
+                <?php wp_nonce_field('guardify_settings_nonce', 'guardify_nonce'); ?>
+                <input type="hidden" name="guardify_save_settings" value="1">
+
+                <table class="form-table" role="presentation">
+                    <!-- Enable/Disable -->
+                    <tr>
+                        <th scope="row">
+                            <label for="guardify_discord_enabled"><?php _e('Discord Notifications', 'guardify'); ?></label>
+                        </th>
+                        <td>
+                            <label class="guardify-toggle">
+                                <input type="checkbox" name="guardify_discord_enabled" id="guardify_discord_enabled" value="1" <?php checked($enabled, '1'); ?>>
+                                <span class="guardify-toggle-slider"></span>
+                            </label>
+                            <p class="description"><?php _e('Enable করলে সব নোটিফিকেশন Discord এ যাবে।', 'guardify'); ?></p>
+                        </td>
+                    </tr>
+
+                    <!-- Webhook URL -->
+                    <tr>
+                        <th scope="row">
+                            <label for="guardify_discord_webhook_url"><?php _e('Webhook URL', 'guardify'); ?></label>
+                        </th>
+                        <td>
+                            <input type="url" name="guardify_discord_webhook_url" id="guardify_discord_webhook_url"
+                                   value="<?php echo esc_attr($webhook_url); ?>"
+                                   class="regular-text" style="width: 100%; max-width: 600px;"
+                                   placeholder="https://discord.com/api/webhooks/...">
+                            <p class="description">
+                                <?php _e('Discord Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook URL', 'guardify'); ?>
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Bot Name -->
+                    <tr>
+                        <th scope="row">
+                            <label for="guardify_discord_bot_name"><?php _e('Bot Name', 'guardify'); ?></label>
+                        </th>
+                        <td>
+                            <input type="text" name="guardify_discord_bot_name" id="guardify_discord_bot_name"
+                                   value="<?php echo esc_attr($bot_name); ?>"
+                                   class="regular-text" placeholder="Guardify">
+                            <p class="description"><?php _e('Discord এ message কোন নামে আসবে।', 'guardify'); ?></p>
+                        </td>
+                    </tr>
+
+                    <!-- Bot Avatar URL -->
+                    <tr>
+                        <th scope="row">
+                            <label for="guardify_discord_bot_avatar"><?php _e('Bot Avatar URL', 'guardify'); ?></label>
+                        </th>
+                        <td>
+                            <input type="url" name="guardify_discord_bot_avatar" id="guardify_discord_bot_avatar"
+                                   value="<?php echo esc_attr($bot_avatar); ?>"
+                                   class="regular-text" style="width: 100%; max-width: 600px;"
+                                   placeholder="https://example.com/avatar.png">
+                            <p class="description"><?php _e('(ঐচ্ছিক) Bot এর avatar/logo URL।', 'guardify'); ?></p>
+                        </td>
+                    </tr>
+
+                    <!-- Notification Events -->
+                    <tr>
+                        <th scope="row"><?php _e('Notification Events', 'guardify'); ?></th>
+                        <td>
+                            <fieldset>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" name="guardify_discord_events[]" value="incomplete"
+                                        <?php checked(in_array('incomplete', $events, true)); ?>>
+                                    🌐 <?php _e('Incomplete Order তৈরি — চেকআউট পেইজে ভিজিটর আসলেই (browser data সহ)', 'guardify'); ?>
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" name="guardify_discord_events[]" value="identified"
+                                        <?php checked(in_array('identified', $events, true)); ?>>
+                                    🟠 <?php _e('Customer Identified — ফোন/ইমেইল ফিলআপ হলে (fraud report সহ)', 'guardify'); ?>
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" name="guardify_discord_events[]" value="new_order"
+                                        <?php checked(in_array('new_order', $events, true)); ?>>
+                                    🟢 <?php _e('New Order — সম্পূর্ণ অর্ডার প্লেস হলে (fraud report সহ)', 'guardify'); ?>
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" name="guardify_discord_events[]" value="fraud_block"
+                                        <?php checked(in_array('fraud_block', $events, true)); ?>>
+                                    🚨 <?php _e('Fraud Block — অর্ডার auto-fail হলে high fraud score এর কারণে', 'guardify'); ?>
+                                </label>
+                            </fieldset>
+                            <p class="description"><?php _e('কোন কোন ইভেন্টে Discord notification পাঠানো হবে সেটি সিলেক্ট করুন।', 'guardify'); ?></p>
+                        </td>
+                    </tr>
+                </table>
+
+                <?php submit_button(__('সেটিংস সেভ করুন', 'guardify')); ?>
+            </form>
+
+            <!-- What gets sent -->
+            <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 20px; margin-top: 25px;">
+                <h3 style="margin-top: 0; color: #0369a1;">📋 <?php _e('কি কি তথ্য Discord এ পাঠানো হয়?', 'guardify'); ?></h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <h4 style="margin-bottom: 8px;">📝 <?php _e('Order Data', 'guardify'); ?></h4>
+                        <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #555;">
+                            <li><?php _e('নাম, ফোন, ইমেইল, ঠিকানা', 'guardify'); ?></li>
+                            <li><?php _e('কার্ট আইটেম ও মোট মূল্য', 'guardify'); ?></li>
+                            <li><?php _e('কাস্টম ফিল্ড (সাইজ, কালার ইত্যাদি)', 'guardify'); ?></li>
+                            <li><?php _e('অর্ডার নোট ও শিপিং তথ্য', 'guardify'); ?></li>
+                            <li><?php _e('CartFlows Flow/Step ID', 'guardify'); ?></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 style="margin-bottom: 8px;">🖥️ <?php _e('Browser & Device', 'guardify'); ?></h4>
+                        <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #555;">
+                            <li><?php _e('Device type, OS, Browser', 'guardify'); ?></li>
+                            <li><?php _e('Screen size, Language, Timezone', 'guardify'); ?></li>
+                            <li><?php _e('Referrer, UTM params, FBCLID/GCLID', 'guardify'); ?></li>
+                            <li><?php _e('IP Address, Connection type', 'guardify'); ?></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 style="margin-bottom: 8px;">🛡️ <?php _e('Fraud Report', 'guardify'); ?></h4>
+                        <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #555;">
+                            <li><?php _e('Fraud Score (0-100) ও Risk Level', 'guardify'); ?></li>
+                            <li><?php _e('Risk Signals ও Verdict', 'guardify'); ?></li>
+                            <li><?php _e('Network Stats (Events, Blocked, Sites)', 'guardify'); ?></li>
+                            <li><?php _e('Courier History (Delivered/Cancelled Rate)', 'guardify'); ?></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 style="margin-bottom: 8px;">📈 <?php _e('Campaign Tracking', 'guardify'); ?></h4>
+                        <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #555;">
+                            <li><?php _e('UTM Source, Medium, Campaign', 'guardify'); ?></li>
+                            <li><?php _e('Facebook Click ID (FBCLID)', 'guardify'); ?></li>
+                            <li><?php _e('Google Click ID (GCLID)', 'guardify'); ?></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Test webhook -->
+            <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-top: 25px;">
+                <h3 style="margin-top: 0;">🧪 <?php _e('Webhook টেস্ট করুন', 'guardify'); ?></h3>
+                <p style="color: #666; font-size: 13px;">
+                    <?php _e('সেটিংস সেভ করার পর, নিচের বাটনে ক্লিক করে একটি টেস্ট মেসেজ পাঠান।', 'guardify'); ?>
+                </p>
+                <button type="button" class="button button-secondary" id="guardify-test-discord" style="margin-top: 5px;">
+                    📤 <?php _e('টেস্ট মেসেজ পাঠান', 'guardify'); ?>
+                </button>
+                <span id="guardify-test-discord-result" style="margin-left: 10px; font-size: 13px;"></span>
+            </div>
+        </div>
+
+        <script>
+        jQuery(function($) {
+            $('#guardify-test-discord').on('click', function() {
+                var $btn = $(this);
+                var $result = $('#guardify-test-discord-result');
+                $btn.prop('disabled', true).text('⏳ পাঠানো হচ্ছে...');
+                $result.text('');
+
+                $.post(ajaxurl, {
+                    action: 'guardify_test_discord',
+                    nonce: '<?php echo wp_create_nonce('guardify_test_discord'); ?>'
+                }, function(response) {
+                    $btn.prop('disabled', false).text('📤 টেস্ট মেসেজ পাঠান');
+                    if (response.success) {
+                        $result.html('<span style="color: #059669;">✅ ' + response.data.message + '</span>');
+                    } else {
+                        $result.html('<span style="color: #dc3545;">❌ ' + (response.data ? response.data.message : 'Error') + '</span>');
+                    }
+                }).fail(function() {
+                    $btn.prop('disabled', false).text('📤 টেস্ট মেসেজ পাঠান');
+                    $result.html('<span style="color: #dc3545;">❌ AJAX Error</span>');
+                });
+            });
+        });
+        </script>
         <?php
     }
 }

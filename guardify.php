@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast courier integration, and order tracking features.
- * Version: 1.0.9
+ * Version: 1.1.0
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.0.9');
+define('GUARDIFY_VERSION', '1.1.0');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -216,6 +216,13 @@ function guardify_init(): void {
     guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-abandoned-cart.php', 'Guardify_Abandoned_Cart');
     if (class_exists('Guardify_Abandoned_Cart')) {
         Guardify_Abandoned_Cart::get_instance();
+    }
+
+    // Discord Webhook Notifications — Hooks into abandoned cart + order events
+    // Loaded after abandoned cart so the actions are available
+    guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-discord.php', 'Guardify_Discord');
+    if (class_exists('Guardify_Discord')) {
+        Guardify_Discord::get_instance();
     }
     
     // Phone Validation - Only on checkout
@@ -470,6 +477,13 @@ function guardify_activate(): void {
         'guardify_abandoned_cart_debounce' => '5000',
         'guardify_abandoned_cart_capture_on_input' => '1',
         'guardify_abandoned_cart_retention_days' => '30',
+
+        // Discord Webhook Notifications
+        'guardify_discord_enabled' => '0',
+        'guardify_discord_webhook_url' => '',
+        'guardify_discord_bot_name' => 'Guardify',
+        'guardify_discord_bot_avatar' => '',
+        'guardify_discord_events' => ['incomplete', 'identified', 'new_order'],
     );
 
     foreach ($default_options as $option => $value) {
