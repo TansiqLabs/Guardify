@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.8 — Patch: cleanup SSO & plugin UI
+
+### Fixed
+- Removed deprecated WP→Console SSO endpoint and AJAX SSO flow; simplified the `Open Console` card to a direct link.
+- Minor PHP/JS cleanup and documentation updates.
+
+### Notes
+- Non-breaking patch; update TansiqLabs Console for SSO improvements.
+
+---
+
 ## v1.0.7 — Patch: persist scores, bulk update, verdict & admin UI
 
 ### Fixed
