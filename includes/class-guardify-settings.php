@@ -25,7 +25,6 @@ class Guardify_Settings {
         add_action('wp_ajax_guardify_activate_license', array($this, 'ajax_activate_license'));
         add_action('wp_ajax_guardify_deactivate_license', array($this, 'ajax_deactivate_license'));
         add_action('wp_ajax_guardify_check_license', array($this, 'ajax_check_license'));
-        add_action('wp_ajax_guardify_sso_login', array($this, 'ajax_sso_login'));
 
         // Non-AJAX fallback for license activation (form POST)
         add_action('admin_post_guardify_activate_license_form', array($this, 'handle_activate_license_form'));
@@ -703,34 +702,6 @@ class Guardify_Settings {
                             xhr.send(fd);
                         }
 
-                        function guardifySsoLogin(btn) {
-                            btn.disabled = true;
-                            btn.innerHTML = '<span class="dashicons dashicons-update" style="animation:rotation 1s linear infinite;font-size:18px;width:18px;height:18px;"></span> Connecting...';
-                            var xhr = new XMLHttpRequest();
-                            xhr.open('POST', guardify_ajax_url, true);
-                            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-                            xhr.onreadystatechange = function() {
-                                if (xhr.readyState !== 4) return;
-                                try {
-                                    var res = JSON.parse(xhr.responseText);
-                                    if (res.success && res.data.sso_url) {
-                                        window.open(res.data.sso_url, '_blank');
-                                        guardifyShowMsg('Console opened in a new tab.', 'success');
-                                    } else {
-                                        guardifyShowMsg(res.data && res.data.message ? res.data.message : 'SSO login failed.', 'error');
-                                    }
-                                } catch(e) {
-                                    guardifyShowMsg('Server error.', 'error');
-                                }
-                                btn.disabled = false;
-                                btn.innerHTML = '<span class="dashicons dashicons-admin-links" style="font-size:18px;width:18px;height:18px;"></span> Open Console';
-                            };
-                            var fd = new FormData();
-                            fd.append('action', 'guardify_sso_login');
-                            fd.append('nonce', guardify_nonce);
-                            xhr.send(fd);
-                        }
-
                         /* Enter key on license input triggers activate */
                         document.addEventListener('DOMContentLoaded', function() {
                             var inp = document.getElementById('guardify-api-key');
@@ -904,7 +875,7 @@ class Guardify_Settings {
                             </div>
                         </div>
 
-                        <!-- Open Console SSO Card -->
+                        <!-- Open Console Card -->
                         <?php if (!empty($api_key)): ?>
                         <div class="guardify-card guardify-console-card">
                             <div class="guardify-modern-header">
@@ -917,12 +888,12 @@ class Guardify_Settings {
                                 </div>
                             </div>
                             <div style="padding: 0 20px 20px;">
-                                <button type="button" id="guardify-sso-login" class="guardify-btn-primary" style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; font-size: 14px; font-weight: 600; width: 100%; justify-content: center;">
-                                    <span class="dashicons dashicons-admin-links" style="font-size: 18px; width: 18px; height: 18px;"></span>
+                                <a href="https://tansiqlabs.com/console" target="_blank" rel="noopener noreferrer" class="guardify-btn-primary" style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; font-size: 14px; font-weight: 600; width: 100%; justify-content: center; text-decoration: none; color: inherit;">
+                                    <span class="dashicons dashicons-external" style="font-size: 18px; width: 18px; height: 18px;"></span>
                                     <?php _e('Open Console', 'guardify'); ?>
-                                </button>
+                                </a>
                                 <p style="text-align: center; margin-top: 10px; font-size: 12px; color: var(--g-slate-400);">
-                                    <?php _e('Secure SSO — opens in a new tab', 'guardify'); ?>
+                                    <?php _e('Opens in a new tab', 'guardify'); ?>
                                 </p>
                             </div>
                         </div>
@@ -1811,48 +1782,6 @@ class Guardify_Settings {
             wp_send_json_error(array(
                 'message' => $result['message'] ?? __('License validation failed', 'guardify'),
                 'license' => $result['license'] ?? null
-            ));
-        }
-    }
-
-    /**
-     * AJAX: Generate SSO token and return console URL
-     */
-    public function ajax_sso_login() {
-        check_ajax_referer('guardify_ajax_nonce', 'nonce');
-        
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => __('Permission denied', 'guardify')));
-        }
-        
-        $api_key = get_option('guardify_api_key', '');
-        if (empty($api_key)) {
-            wp_send_json_error(array('message' => __('No license key configured. Please activate your license first.', 'guardify')));
-            return;
-        }
-        
-        $response = wp_remote_post(self::TANSIQLABS_API_URL . 'sso', array(
-            'timeout' => 15,
-            'headers' => array('Content-Type' => 'application/json'),
-            'body' => wp_json_encode(array(
-                'license_key' => $api_key,
-                'site_url' => home_url(),
-            )),
-        ));
-        
-        if (is_wp_error($response)) {
-            wp_send_json_error(array('message' => __('Could not connect to TansiqLabs. Please try again.', 'guardify')));
-            return;
-        }
-        
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        $status_code = wp_remote_retrieve_response_code($response);
-        
-        if ($status_code === 200 && !empty($data['success']) && !empty($data['sso_url'])) {
-            wp_send_json_success(array('sso_url' => $data['sso_url']));
-        } else {
-            wp_send_json_error(array(
-                'message' => $data['message'] ?? __('SSO login failed. Please try logging in manually.', 'guardify'),
             ));
         }
     }
