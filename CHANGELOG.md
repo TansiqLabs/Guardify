@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.0.9 — Incomplete Order Capture (Abandoned Cart)
+
+### Added
+- **Incomplete Order Capture:** New `Guardify_Abandoned_Cart` class that captures checkout data in real-time as customers fill out forms. Creates "Incomplete" orders when customers abandon checkout without submitting.
+- **Custom `wc-incomplete` order status:** Registered with WooCommerce, appears in the regular Orders list with a distinctive red badge. Filterable like any other order status.
+- **Browser close / tab switch detection:** Uses `visibilitychange` + `beforeunload` events with `navigator.sendBeacon` for reliable capture even when users close the browser.
+- **Field-level capture:** Debounced AJAX capture on field blur — phone and email trigger immediate capture, other fields follow the configurable debounce timer.
+- **CartFlows full support:** Detects CartFlows checkout steps, captures `_wcf_flow_id` and `_wcf_checkout_id` metadata for CartFlows orders.
+- **Admin settings page:** New "Incomplete Orders" submenu under Guardify with toggle, debounce config, retention period, recent incomplete orders table, and compatibility info.
+- **Auto-cleanup:** Configurable retention (default 30 days). Daily cron deletes old incomplete orders automatically.
+- **Draft deduplication:** Same phone/email within 2 hours reuses existing incomplete order instead of creating duplicates.
+- **Auto-trash on completion:** When a customer completes checkout, the corresponding incomplete order is automatically trashed.
+
+### LiteSpeed Cache + Redis + OpenLiteSpeed Compatibility
+- Uses `admin-ajax.php` exclusively (never REST API) — **admin-ajax is never cached by LiteSpeed**, even with Aggressive/Advanced preset.
+- Explicit `litespeed_control_set_nocache` action called as defense-in-depth.
+- Redis object cache is transparent — `wp_options` and WC order storage work normally through Redis.
+- OpenLiteSpeed server fully compatible — no `.htaccess` or server-level config changes needed.
+- No ESI nonce issues — nonces are passed via `wp_localize_script` (inline JS data), not embedded in cached HTML.
+
+### Notes
+- WooCommerce HPOS compatible (uses `wc_get_orders()` and WC Order objects, not direct DB queries).
+- Default: enabled on activation. Configurable via Guardify → Incomplete Orders.
+
+---
+
 ## v1.0.8 — Patch: cleanup SSO & plugin UI
 
 ### Fixed

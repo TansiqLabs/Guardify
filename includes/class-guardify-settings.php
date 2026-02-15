@@ -101,6 +101,15 @@ class Guardify_Settings {
             'guardify-steadfast',
             array($this, 'render_steadfast_page')
         );
+
+        add_submenu_page(
+            'guardify-settings',
+            __('Incomplete Orders', 'guardify'),
+            __('Incomplete Orders', 'guardify'),
+            'manage_options',
+            'guardify-abandoned-cart',
+            array($this, 'render_abandoned_cart_page')
+        );
     }
 
     /**
@@ -275,6 +284,16 @@ class Guardify_Settings {
         update_option('guardify_email_notification', isset($_POST['guardify_email_notification']) ? '1' : '0');
         if (isset($_POST['guardify_notification_email'])) {
             update_option('guardify_notification_email', sanitize_email($_POST['guardify_notification_email']));
+        }
+
+        // Abandoned Cart / Incomplete Order Capture
+        update_option('guardify_abandoned_cart_enabled', isset($_POST['guardify_abandoned_cart_enabled']) ? '1' : '0');
+        update_option('guardify_abandoned_cart_capture_on_input', isset($_POST['guardify_abandoned_cart_capture_on_input']) ? '1' : '0');
+        if (isset($_POST['guardify_abandoned_cart_debounce'])) {
+            update_option('guardify_abandoned_cart_debounce', absint($_POST['guardify_abandoned_cart_debounce']));
+        }
+        if (isset($_POST['guardify_abandoned_cart_retention_days'])) {
+            update_option('guardify_abandoned_cart_retention_days', absint($_POST['guardify_abandoned_cart_retention_days']));
         }
 
         // SteadFast Courier Settings — API keys managed via TansiqLabs console, only save local settings
@@ -2584,6 +2603,256 @@ class Guardify_Settings {
                     <?php endif; ?>
                 </div>
             </div>
+        </div>
+        <?php
+    }
+
+    // =========================================================================
+    // ABANDONED CART / INCOMPLETE ORDER SETTINGS PAGE
+    // =========================================================================
+
+    /**
+     * Render Abandoned Cart / Incomplete Order settings page
+     */
+    public function render_abandoned_cart_page() {
+        $enabled           = get_option('guardify_abandoned_cart_enabled', '1');
+        $capture_on_input  = get_option('guardify_abandoned_cart_capture_on_input', '1');
+        $debounce          = get_option('guardify_abandoned_cart_debounce', '5000');
+        $retention_days    = get_option('guardify_abandoned_cart_retention_days', '30');
+
+        // Count incomplete orders
+        $incomplete_count = 0;
+        if (function_exists('wc_get_orders')) {
+            $orders = wc_get_orders([
+                'status' => 'incomplete',
+                'limit'  => -1,
+                'return' => 'ids',
+            ]);
+            $incomplete_count = count($orders);
+        }
+
+        // Recent incomplete orders (last 10)
+        $recent_incomplete = [];
+        if (function_exists('wc_get_orders')) {
+            $recent_incomplete = wc_get_orders([
+                'status'  => 'incomplete',
+                'limit'   => 10,
+                'orderby' => 'date',
+                'order'   => 'DESC',
+            ]);
+        }
+        ?>
+        <div class="wrap guardify-settings-wrap">
+            <div class="guardify-header" style="background: linear-gradient(135deg, #1e3a5f, #2c5282); color: #fff; padding: 20px 24px; border-radius: 8px; margin-bottom: 24px;">
+                <h1 style="color: #fff; margin: 0; font-size: 22px;">
+                    <span class="dashicons dashicons-cart" style="font-size: 24px; margin-right: 8px;"></span>
+                    <?php _e('Incomplete Orders — Abandoned Cart Capture', 'guardify'); ?>
+                </h1>
+                <p style="color: rgba(255,255,255,0.8); margin: 8px 0 0 0;">
+                    <?php _e('চেকআউট ফর্ম ফিলআপ শুরু করলেই ডেটা ক্যাপচার হয়। সাবমিট না করলে "Incomplete" স্ট্যাটাসে অর্ডার তৈরি হয়।', 'guardify'); ?>
+                </p>
+            </div>
+
+            <?php if (isset($_GET['settings-updated'])): ?>
+                <div class="notice notice-success is-dismissible">
+                    <p>✅ <?php _e('সেটিংস সফলভাবে আপডেট হয়েছে।', 'guardify'); ?></p>
+                </div>
+            <?php endif; ?>
+
+            <!-- Stats -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
+                    <div style="font-size: 32px; font-weight: 700; color: #dc3545;">
+                        <?php echo esc_html($incomplete_count); ?>
+                    </div>
+                    <div style="color: #666; margin-top: 4px;"><?php _e('মোট Incomplete অর্ডার', 'guardify'); ?></div>
+                </div>
+                <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
+                    <div style="font-size: 32px; font-weight: 700; color: <?php echo $enabled === '1' ? '#28a745' : '#dc3545'; ?>;">
+                        <?php echo $enabled === '1' ? '✅ ON' : '❌ OFF'; ?>
+                    </div>
+                    <div style="color: #666; margin-top: 4px;"><?php _e('ক্যাপচার স্ট্যাটাস', 'guardify'); ?></div>
+                </div>
+                <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
+                    <div style="font-size: 32px; font-weight: 700; color: #2c5282;">
+                        <?php echo esc_html($retention_days); ?><?php _e(' দিন', 'guardify'); ?>
+                    </div>
+                    <div style="color: #666; margin-top: 4px;"><?php _e('ডেটা সংরক্ষণ', 'guardify'); ?></div>
+                </div>
+                <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=wc-orders&status=wc-incomplete')); ?>" style="text-decoration: none;">
+                        <div style="font-size: 18px; font-weight: 700; color: #2271b1;">
+                            <?php _e('📋 সব Incomplete অর্ডার দেখুন →', 'guardify'); ?>
+                        </div>
+                    </a>
+                    <div style="color: #666; margin-top: 4px;"><?php _e('WooCommerce Orders পেজে', 'guardify'); ?></div>
+                </div>
+            </div>
+
+            <!-- Settings Form -->
+            <form method="post" action="">
+                <?php wp_nonce_field('guardify_settings'); ?>
+                <input type="hidden" name="guardify_save_settings" value="1">
+
+                <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
+                    <h2 style="margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px;">
+                        ⚙️ <?php _e('ক্যাপচার সেটিংস', 'guardify'); ?>
+                    </h2>
+
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row"><?php _e('Incomplete অর্ডার ক্যাপচার', 'guardify'); ?></th>
+                            <td>
+                                <label class="guardify-switch">
+                                    <input type="checkbox" name="guardify_abandoned_cart_enabled" value="1" <?php checked($enabled, '1'); ?>>
+                                    <span class="guardify-slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php _e('চেকআউট পেজে ফর্ম ফিলআপ শুরু করলে ডেটা ক্যাপচার হবে। ব্রাউজার বন্ধ করলে বা ট্যাব সুইচ করলেও ধরা পড়বে।', 'guardify'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php _e('ফিল্ড ইনপুটে ক্যাপচার', 'guardify'); ?></th>
+                            <td>
+                                <label class="guardify-switch">
+                                    <input type="checkbox" name="guardify_abandoned_cart_capture_on_input" value="1" <?php checked($capture_on_input, '1'); ?>>
+                                    <span class="guardify-slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php _e('প্রতিটি ফিল্ড থেকে বের হলে (blur) ডেটা সেভ হবে। বন্ধ করলে শুধু ব্রাউজার ক্লোজ / ট্যাব সুইচে ক্যাপচার হবে।', 'guardify'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php _e('ডিবাউন্স টাইম (ms)', 'guardify'); ?></th>
+                            <td>
+                                <input type="number" name="guardify_abandoned_cart_debounce" value="<?php echo esc_attr($debounce); ?>" min="1000" max="30000" step="1000" class="small-text">
+                                <p class="description">
+                                    <?php _e('ফিল্ড ব্লার ইভেন্টের পর কত মিলিসেকেন্ড পর AJAX পাঠাবে। ডিফল্ট: 5000ms (5 সেকেন্ড)।', 'guardify'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php _e('ডেটা সংরক্ষণ (দিন)', 'guardify'); ?></th>
+                            <td>
+                                <input type="number" name="guardify_abandoned_cart_retention_days" value="<?php echo esc_attr($retention_days); ?>" min="0" max="365" class="small-text">
+                                <p class="description">
+                                    <?php _e('এই দিনের বেশি পুরানো Incomplete অর্ডার অটো-ডিলিট হবে। 0 = কখনো ডিলিট হবে না।', 'guardify'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div style="padding-top: 12px; border-top: 1px solid #e2e8f0;">
+                        <input type="submit" class="button button-primary button-large" value="<?php esc_attr_e('সেটিংস সেভ করুন', 'guardify'); ?>">
+                    </div>
+                </div>
+            </form>
+
+            <!-- Compatibility Info -->
+            <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
+                <h2 style="margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px;">
+                    🔄 <?php _e('কম্প্যাটিবিলিটি', 'guardify'); ?>
+                </h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                    <div style="padding: 12px; background: #f0fdf4; border-radius: 6px; border-left: 3px solid #22c55e;">
+                        <strong>✅ WooCommerce Checkout</strong>
+                        <p style="margin: 4px 0 0; font-size: 13px; color: #555;"><?php _e('স্ট্যান্ডার্ড চেকআউট পেজ', 'guardify'); ?></p>
+                    </div>
+                    <div style="padding: 12px; background: #f0fdf4; border-radius: 6px; border-left: 3px solid #22c55e;">
+                        <strong>✅ CartFlows</strong>
+                        <p style="margin: 4px 0 0; font-size: 13px; color: #555;"><?php _e('Modern, Instant, One Column', 'guardify'); ?></p>
+                    </div>
+                    <div style="padding: 12px; background: #f0fdf4; border-radius: 6px; border-left: 3px solid #22c55e;">
+                        <strong>✅ LiteSpeed Cache</strong>
+                        <p style="margin: 4px 0 0; font-size: 13px; color: #555;"><?php _e('Aggressive/Advanced preset safe', 'guardify'); ?></p>
+                    </div>
+                    <div style="padding: 12px; background: #f0fdf4; border-radius: 6px; border-left: 3px solid #22c55e;">
+                        <strong>✅ Redis Object Cache</strong>
+                        <p style="margin: 4px 0 0; font-size: 13px; color: #555;"><?php _e('Transparent — no impact', 'guardify'); ?></p>
+                    </div>
+                    <div style="padding: 12px; background: #f0fdf4; border-radius: 6px; border-left: 3px solid #22c55e;">
+                        <strong>✅ OpenLiteSpeed</strong>
+                        <p style="margin: 4px 0 0; font-size: 13px; color: #555;"><?php _e('admin-ajax.php never cached', 'guardify'); ?></p>
+                    </div>
+                    <div style="padding: 12px; background: #f0fdf4; border-radius: 6px; border-left: 3px solid #22c55e;">
+                        <strong>✅ HPOS</strong>
+                        <p style="margin: 4px 0 0; font-size: 13px; color: #555;"><?php _e('WooCommerce HPOS compatible', 'guardify'); ?></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- How it works -->
+            <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
+                <h2 style="margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px;">
+                    📖 <?php _e('কিভাবে কাজ করে', 'guardify'); ?>
+                </h2>
+                <ol style="line-height: 1.8; color: #444;">
+                    <li><?php _e('কাস্টমার চেকআউট পেজে আসলে JavaScript লোড হয়', 'guardify'); ?></li>
+                    <li><?php _e('ফোন নাম্বার বা ইমেইল দেওয়া হলে AJAX দিয়ে "Incomplete" অর্ডার তৈরি হয়', 'guardify'); ?></li>
+                    <li><?php _e('পরবর্তী ফিল্ড ফিলআপ করলে অর্ডার আপডেট হয় (নাম, ঠিকানা ইত্যাদি)', 'guardify'); ?></li>
+                    <li><?php _e('ব্রাউজার বন্ধ করলে বা ট্যাব সুইচ করলে sendBeacon দিয়ে শেষ ডেটা পাঠানো হয়', 'guardify'); ?></li>
+                    <li><?php _e('যদি কাস্টমার অর্ডার সম্পন্ন করে, তাহলে Incomplete অর্ডার অটো-ট্র্যাশ হয়', 'guardify'); ?></li>
+                    <li><?php _e('Incomplete অর্ডার WooCommerce Orders পেজে দেখা যায়, ফিল্টার করা যায়', 'guardify'); ?></li>
+                </ol>
+                <div style="background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 12px; margin-top: 12px;">
+                    <strong>⚡ LiteSpeed + Redis নোট:</strong>
+                    <p style="margin: 4px 0 0; font-size: 13px;">
+                        <?php _e('এই ফিচার admin-ajax.php ব্যবহার করে (REST API না)। LiteSpeed Cache কখনো admin-ajax.php ক্যাশ করে না (এমনকি Aggressive preset-এও)। Redis object cache transparent — কোনো ইমপ্যাক্ট নেই। OpenLiteSpeed সার্ভার সম্পূর্ণ কম্প্যাটিবল।', 'guardify'); ?>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Recent Incomplete Orders -->
+            <?php if (!empty($recent_incomplete)): ?>
+            <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px;">
+                <h2 style="margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px;">
+                    📋 <?php _e('সাম্প্রতিক Incomplete অর্ডার', 'guardify'); ?>
+                </h2>
+                <table class="wp-list-table widefat striped" style="border: none;">
+                    <thead>
+                        <tr>
+                            <th><?php _e('অর্ডার', 'guardify'); ?></th>
+                            <th><?php _e('ফোন', 'guardify'); ?></th>
+                            <th><?php _e('নাম', 'guardify'); ?></th>
+                            <th><?php _e('শহর', 'guardify'); ?></th>
+                            <th><?php _e('ট্রিগার', 'guardify'); ?></th>
+                            <th><?php _e('তারিখ', 'guardify'); ?></th>
+                            <th><?php _e('সোর্স', 'guardify'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($recent_incomplete as $order): ?>
+                            <?php
+                            $order_id = $order->get_id();
+                            $phone    = $order->get_billing_phone();
+                            $name     = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
+                            $city     = $order->get_billing_city();
+                            $trigger  = $order->get_meta('_guardify_capture_trigger') ?: '—';
+                            $date     = $order->get_date_created() ? $order->get_date_created()->date('Y-m-d H:i') : '—';
+                            $has_cartflows = $order->get_meta('_wcf_checkout_id') ? true : false;
+                            $edit_url = $order->get_edit_order_url();
+                            ?>
+                            <tr>
+                                <td><a href="<?php echo esc_url($edit_url); ?>" style="font-weight: 600;">#<?php echo esc_html($order_id); ?></a></td>
+                                <td><code><?php echo esc_html($phone ?: '—'); ?></code></td>
+                                <td><?php echo esc_html($name ?: '—'); ?></td>
+                                <td><?php echo esc_html($city ?: '—'); ?></td>
+                                <td><span style="font-size: 12px; background: #e8f4fd; padding: 2px 6px; border-radius: 3px;"><?php echo esc_html($trigger); ?></span></td>
+                                <td style="font-size: 13px; color: #666;"><?php echo esc_html($date); ?></td>
+                                <td><?php echo $has_cartflows ? '<span style="color: #6366f1;">CartFlows</span>' : '<span style="color: #059669;">WooCommerce</span>'; ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <p style="margin-top: 12px;">
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=wc-orders&status=wc-incomplete')); ?>" class="button">
+                        <?php _e('সব Incomplete অর্ডার দেখুন →', 'guardify'); ?>
+                    </a>
+                </p>
+            </div>
+            <?php endif; ?>
         </div>
         <?php
     }
