@@ -111,6 +111,15 @@ class Guardify_Settings {
             array($this, 'render_abandoned_cart_page')
         );
 
+        add_submenu_page(
+            'guardify-settings',
+            __('Discord Notifications', 'guardify'),
+            __('Discord', 'guardify'),
+            'manage_options',
+            'guardify-discord',
+            array($this, 'render_discord_page')
+        );
+
     }
 
     /**
@@ -295,6 +304,36 @@ class Guardify_Settings {
         }
         if (isset($_POST['guardify_abandoned_cart_retention_days'])) {
             update_option('guardify_abandoned_cart_retention_days', absint($_POST['guardify_abandoned_cart_retention_days']));
+        }
+
+        // Discord Webhook Notification Settings
+        if (isset($_POST['guardify_discord_save'])) {
+            update_option('guardify_discord_enabled', isset($_POST['guardify_discord_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_discord_webhook_url'])) {
+                update_option('guardify_discord_webhook_url', esc_url_raw($_POST['guardify_discord_webhook_url']));
+            }
+            if (isset($_POST['guardify_discord_bot_name'])) {
+                update_option('guardify_discord_bot_name', sanitize_text_field($_POST['guardify_discord_bot_name']));
+            }
+            if (isset($_POST['guardify_discord_bot_avatar'])) {
+                update_option('guardify_discord_bot_avatar', esc_url_raw($_POST['guardify_discord_bot_avatar']));
+            }
+            // Per-event webhook URLs (optional overrides)
+            $per_event_urls = [];
+            $event_keys = ['incomplete', 'identified', 'new_order', 'processing', 'completed', 'on-hold', 'cancelled', 'refunded', 'failed', 'fraud_block'];
+            foreach ($event_keys as $ek) {
+                $field = 'guardify_discord_webhook_' . $ek;
+                if (isset($_POST[$field]) && !empty(trim($_POST[$field]))) {
+                    $per_event_urls[$ek] = esc_url_raw($_POST[$field]);
+                }
+            }
+            update_option('guardify_discord_webhook_urls', $per_event_urls);
+
+            // Enabled events
+            $enabled_events = isset($_POST['guardify_discord_events']) && is_array($_POST['guardify_discord_events'])
+                ? array_map('sanitize_text_field', $_POST['guardify_discord_events'])
+                : [];
+            update_option('guardify_discord_events', $enabled_events);
         }
 
         // SteadFast Courier Settings — API keys managed via TansiqLabs console, only save local settings
@@ -2880,6 +2919,192 @@ class Guardify_Settings {
         <?php
     }
 
-    // Discord Notifications settings page has been moved to TansiqLabs Console.
-    // See: https://console.tansiqlabs.com/guardify/settings
+    /**
+     * Render Discord Notifications settings page
+     */
+    public function render_discord_page() {
+        $enabled      = get_option('guardify_discord_enabled', '0');
+        $webhook_url  = get_option('guardify_discord_webhook_url', '');
+        $bot_name     = get_option('guardify_discord_bot_name', 'Guardify');
+        $bot_avatar   = get_option('guardify_discord_bot_avatar', '');
+        $per_event    = get_option('guardify_discord_webhook_urls', []);
+        if (!is_array($per_event)) $per_event = [];
+        $events       = get_option('guardify_discord_events', ['incomplete', 'identified', 'new_order', 'processing', 'completed', 'cancelled', 'on-hold', 'refunded', 'failed', 'fraud_block']);
+        if (!is_array($events)) $events = [];
+
+        $all_events = [
+            'incomplete'  => ['label' => 'Incomplete Order Created', 'desc' => 'When a visitor starts checkout (browser data captured)'],
+            'identified'  => ['label' => 'Customer Identified', 'desc' => 'When phone/email is filled on incomplete order'],
+            'new_order'   => ['label' => 'New Order Placed', 'desc' => 'When a real WooCommerce order is created'],
+            'processing'  => ['label' => 'Order Processing', 'desc' => 'When order moves to processing status'],
+            'completed'   => ['label' => 'Order Completed', 'desc' => 'When order is marked complete'],
+            'on-hold'     => ['label' => 'Order On Hold', 'desc' => 'When order is put on hold'],
+            'cancelled'   => ['label' => 'Order Cancelled', 'desc' => 'When order is cancelled'],
+            'refunded'    => ['label' => 'Order Refunded', 'desc' => 'When order is refunded'],
+            'failed'      => ['label' => 'Order Failed', 'desc' => 'When order payment fails'],
+            'fraud_block' => ['label' => 'Fraud Block', 'desc' => 'When an order is auto-blocked due to high fraud score'],
+        ];
+        ?>
+        <div class="wrap guardify-settings-wrap">
+            <!-- Premium Header -->
+            <div class="guardify-header">
+                <div class="guardify-header-content">
+                    <div class="guardify-logo">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#fff" width="40" height="40"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+                    </div>
+                    <div>
+                        <h1>Discord Notifications</h1>
+                        <p class="guardify-subtitle"><?php _e('Real-time order alerts to Discord', 'guardify'); ?></p>
+                    </div>
+                </div>
+                <div class="guardify-version-badge">
+                    <span class="version">v<?php echo GUARDIFY_VERSION; ?></span>
+                    <span class="developer">by Tansiq Labs</span>
+                </div>
+            </div>
+
+            <?php if (isset($_GET['settings-updated'])): ?>
+                <div class="notice notice-success is-dismissible guardify-success-notice">
+                    <div class="guardify-notice-content">
+                        <span class="dashicons dashicons-yes-alt"></span>
+                        <div>
+                            <p><strong><?php _e('Discord settings saved successfully!', 'guardify'); ?></strong></p>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <form method="post" action="">
+                <?php wp_nonce_field('guardify_settings'); ?>
+                <input type="hidden" name="guardify_save_settings" value="1">
+                <input type="hidden" name="guardify_discord_save" value="1">
+
+                <!-- Enable/Disable Card -->
+                <div class="guardify-card">
+                    <div class="guardify-card-header">
+                        <h2>
+                            <span class="dashicons dashicons-megaphone"></span>
+                            <?php _e('Discord Webhook Configuration', 'guardify'); ?>
+                        </h2>
+                    </div>
+                    <div class="guardify-card-content">
+                        <table class="form-table">
+                            <tr>
+                                <th scope="row"><?php _e('Enable Discord Notifications', 'guardify'); ?></th>
+                                <td>
+                                    <label class="guardify-toggle">
+                                        <input type="checkbox" name="guardify_discord_enabled" value="1" <?php checked($enabled, '1'); ?>>
+                                        <span class="guardify-toggle-slider"></span>
+                                    </label>
+                                    <p class="description"><?php _e('Enable to send order events to your Discord channel via webhook.', 'guardify'); ?></p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Webhook URL', 'guardify'); ?> <span style="color:#dc3545;">*</span></th>
+                                <td>
+                                    <input type="url" name="guardify_discord_webhook_url" value="<?php echo esc_attr($webhook_url); ?>" class="regular-text" style="width: 100%; max-width: 600px;" placeholder="https://discord.com/api/webhooks/...">
+                                    <p class="description"><?php _e('Primary Discord webhook URL. Used for all events unless overridden below.', 'guardify'); ?></p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Bot Name', 'guardify'); ?></th>
+                                <td>
+                                    <input type="text" name="guardify_discord_bot_name" value="<?php echo esc_attr($bot_name); ?>" class="regular-text" placeholder="Guardify">
+                                    <p class="description"><?php _e('Display name for the webhook bot in Discord.', 'guardify'); ?></p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Bot Avatar URL', 'guardify'); ?></th>
+                                <td>
+                                    <input type="url" name="guardify_discord_bot_avatar" value="<?php echo esc_attr($bot_avatar); ?>" class="regular-text" style="width: 100%; max-width: 600px;" placeholder="https://example.com/avatar.png">
+                                    <p class="description"><?php _e('Optional avatar image URL for the bot. Leave empty for default.', 'guardify'); ?></p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Events Card -->
+                <div class="guardify-card">
+                    <div class="guardify-card-header">
+                        <h2>
+                            <span class="dashicons dashicons-bell"></span>
+                            <?php _e('Notification Events', 'guardify'); ?>
+                        </h2>
+                    </div>
+                    <div class="guardify-card-content">
+                        <p class="description" style="margin-bottom: 16px;"><?php _e('Select which order events trigger a Discord notification. You can optionally set a different webhook URL per event.', 'guardify'); ?></p>
+                        <table class="form-table">
+                            <?php foreach ($all_events as $key => $info): ?>
+                            <tr>
+                                <th scope="row">
+                                    <label>
+                                        <input type="checkbox" name="guardify_discord_events[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, $events)); ?>>
+                                        <?php echo esc_html($info['label']); ?>
+                                    </label>
+                                </th>
+                                <td>
+                                    <input type="url" name="guardify_discord_webhook_<?php echo esc_attr($key); ?>" value="<?php echo esc_attr($per_event[$key] ?? ''); ?>" class="regular-text" style="width: 100%; max-width: 500px;" placeholder="<?php _e('(uses primary URL)', 'guardify'); ?>">
+                                    <p class="description"><?php echo esc_html($info['desc']); ?></p>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Test & Save -->
+                <div class="guardify-card">
+                    <div class="guardify-card-header">
+                        <h2>
+                            <span class="dashicons dashicons-admin-tools"></span>
+                            <?php _e('Test & Save', 'guardify'); ?>
+                        </h2>
+                    </div>
+                    <div class="guardify-card-content">
+                        <p>
+                            <button type="button" id="guardify-test-discord-btn" class="button button-secondary" style="margin-right: 10px;">
+                                <span class="dashicons dashicons-controls-play" style="margin-top: 4px;"></span>
+                                <?php _e('Send Test Message', 'guardify'); ?>
+                            </button>
+                            <span id="guardify-test-discord-result" style="vertical-align: middle;"></span>
+                        </p>
+                        <p class="description" style="margin-bottom: 16px;"><?php _e('Save your settings first, then click Test to verify the webhook works.', 'guardify'); ?></p>
+                        <p class="submit">
+                            <input type="submit" name="guardify_save_settings" class="button button-primary" value="<?php _e('Save Discord Settings', 'guardify'); ?>">
+                        </p>
+                    </div>
+                </div>
+
+            </form>
+
+            <script>
+            jQuery(function($) {
+                $('#guardify-test-discord-btn').on('click', function() {
+                    var $btn = $(this);
+                    var $result = $('#guardify-test-discord-result');
+                    $btn.prop('disabled', true).text('Sending...');
+                    $result.html('');
+                    $.post(ajaxurl, {
+                        action: 'guardify_test_discord',
+                        nonce: '<?php echo wp_create_nonce('guardify_test_discord'); ?>'
+                    }, function(response) {
+                        $btn.prop('disabled', false).html('<span class="dashicons dashicons-controls-play" style="margin-top:4px;"></span> Send Test Message');
+                        if (response.success) {
+                            $result.html('<span style="color:#059669;font-weight:600;">✅ ' + response.data.message + '</span>');
+                        } else {
+                            $result.html('<span style="color:#dc3545;font-weight:600;">❌ ' + response.data.message + '</span>');
+                        }
+                    }).fail(function() {
+                        $btn.prop('disabled', false).html('<span class="dashicons dashicons-controls-play" style="margin-top:4px;"></span> Send Test Message');
+                        $result.html('<span style="color:#dc3545;">❌ AJAX request failed.</span>');
+                    });
+                });
+            });
+            </script>
+        </div>
+        <?php
+    }
+
+    // Discord Notifications settings page is now available directly in WP Admin.
 }

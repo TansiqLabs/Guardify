@@ -100,7 +100,7 @@ class Guardify_Discord {
         add_action('woocommerce_order_status_changed', [$this, 'on_status_changed'], 20, 4);
 
         // ─── Scheduled retry for failed webhooks ───
-        add_action('guardify_discord_retry_webhook', [$this, 'retry_failed_webhook'], 10, 2);
+        add_action('guardify_discord_retry_webhook', [$this, 'retry_failed_webhook'], 10, 3);
     }
 
     // =========================================================================
@@ -430,7 +430,7 @@ class Guardify_Discord {
                 'url'       => admin_url('admin.php?page=wc-orders&action=edit&id=' . $order->get_id()),
                 'footer'    => ['text' => 'Guardify v' . GUARDIFY_VERSION . ' • ' . wp_parse_url(home_url(), PHP_URL_HOST)],
             ]],
-        ]);
+        ], 1, $new_status);
     }
 
     // =========================================================================
@@ -521,7 +521,7 @@ class Guardify_Discord {
         // ─── SEND ───
         $this->send_webhook([
             'embeds' => $embeds,
-        ]);
+        ], 1, $context['event'] ?? '');
     }
 
     /**
@@ -1151,10 +1151,10 @@ class Guardify_Discord {
     /**
      * Send payload to Discord webhook (blocking with error handling + retry)
      */
-    private function send_webhook(array $payload, int $attempt = 1): bool {
-        $webhook_url = $this->get_webhook_url();
+    private function send_webhook(array $payload, int $attempt = 1, string $event_type = ''): bool {
+        $webhook_url = !empty($event_type) ? $this->get_webhook_url_for_event($event_type) : $this->get_webhook_url();
         if (empty($webhook_url)) {
-            error_log('Guardify Discord: No webhook URL configured.');
+            error_log('Guardify Discord: No webhook URL configured (event: ' . ($event_type ?: 'general') . ').');
             return false;
         }
 
@@ -1186,7 +1186,7 @@ class Guardify_Discord {
             
             // Schedule retry
             if ($attempt < self::MAX_RETRIES) {
-                $this->schedule_retry($payload, $attempt + 1);
+                $this->schedule_retry($payload, $attempt + 1, 5, $event_type);
             }
             return false;
         }
@@ -1207,7 +1207,7 @@ class Guardify_Discord {
             error_log("Guardify Discord: Rate limited. Retry after {$retry_after}s (attempt {$attempt}).");
             
             if ($attempt < self::MAX_RETRIES) {
-                $this->schedule_retry($payload, $attempt + 1, $retry_after_seconds);
+                $this->schedule_retry($payload, $attempt + 1, $retry_after_seconds, $event_type);
             }
             return false;
         }
@@ -1217,7 +1217,7 @@ class Guardify_Discord {
         error_log("Guardify Discord Error (HTTP {$code}, attempt {$attempt}): " . mb_substr($body, 0, 300));
 
         if ($attempt < self::MAX_RETRIES && $code >= 500) {
-            $this->schedule_retry($payload, $attempt + 1);
+            $this->schedule_retry($payload, $attempt + 1, 5, $event_type);
         }
 
         return false;
@@ -1226,19 +1226,19 @@ class Guardify_Discord {
     /**
      * Schedule a retry for a failed webhook
      */
-    private function schedule_retry(array $payload, int $attempt, int $delay_seconds = 5): void {
+    private function schedule_retry(array $payload, int $attempt, int $delay_seconds = 5, string $event_type = ''): void {
         wp_schedule_single_event(
             time() + $delay_seconds,
             'guardify_discord_retry_webhook',
-            [$payload, $attempt]
+            [$payload, $attempt, $event_type]
         );
     }
 
     /**
      * Handle scheduled webhook retry
      */
-    public function retry_failed_webhook(array $payload, int $attempt): void {
-        $this->send_webhook($payload, $attempt);
+    public function retry_failed_webhook(array $payload, int $attempt, string $event_type = ''): void {
+        $this->send_webhook($payload, $attempt, $event_type);
     }
 
     // =========================================================================
