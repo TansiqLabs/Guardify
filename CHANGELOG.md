@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.2.0 — Discord Integration Restored & Enriched
+
+### Critical Fix
+- **Discord Notifications NOW WORK:** The `Guardify_Discord` class was never loaded in `guardify_init()` — the file existed but was never `require`'d or instantiated. This is the root cause of messages not being sent. Fixed by adding Discord class loading alongside Fraud Check in the plugin initialization.
+- **Webhook delivery was unreliable:** `send_webhook()` used `'blocking' => false` in `wp_remote_post()`, which fires-and-forgets the HTTP request. On many hosts, the PHP process terminates before the request completes. Changed to `'blocking' => true` to ensure messages are actually delivered.
+
+### New Features
+- **Order Status Change Notifications:** Discord now receives notifications for ALL status changes — processing, completed, on-hold, cancelled, refunded, failed — each with unique colors and emojis.
+- **Repeat Customer Detection:** New embed shows previous orders, total spent, completion rate, and a reliability score (🟢 Reliable / 🟡 Mixed / 🔴 Risky) for returning customers.
+- **Coupon Tracking:** Coupons used in orders are displayed with discount amounts.
+- **Payment Details:** Payment method, transaction ID, and order date shown in notifications.
+- **Order Totals Breakdown:** Subtotal, shipping (with method name), discounts, tax, and total displayed separately.
+- **Product Variation Info:** Cart items embed now shows variation details (size, color, etc.) alongside product names.
+- **Visual Fraud Score Bar:** Fraud score shown with a color bar (🟥🟥🟥⬜⬜⬜⬜⬜⬜⬜) for quick visual assessment.
+- **Webhook Retry Mechanism:** Failed webhook calls (network error, rate limit, server error) are automatically retried up to 2 times with scheduled delays.
+- **Rate Limit Handling:** Discord 429 responses are detected and retried after the specified cooldown period.
+- **Enhanced Error Logging:** All webhook failures logged with attempt number, HTTP status, and response body for debugging.
+- **Status Changed By:** Shows who changed the order status (admin user name/email or "Customer / System").
+- **Smart Deduplication:** Avoids sending duplicate notifications when a new order immediately transitions to processing.
+- **Admin/API Order Capture:** Fallback hook catches orders created via REST API or admin panel.
+- **TikTok Click ID (ttclid):** Added to UTM/campaign tracking.
+- **Samsung & UC Browser Detection:** User agent parser now identifies these popular mobile browsers.
+
+### Technical
+- Updated: `guardify.php` — Added Discord class loading in `guardify_init()` (the critical missing piece)
+- Rewritten: `includes/class-guardify-discord.php` — Complete rewrite with all new features
+- Version: 1.1.3 → 1.2.0
+
 ## v1.1.3 — Incomplete Order Fix + WC Session Init
 
 ### Fixed

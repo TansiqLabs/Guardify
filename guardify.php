@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast courier integration, and order tracking features.
- * Version: 1.1.3
+ * Version: 1.2.0
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.1.3');
+define('GUARDIFY_VERSION', '1.2.0');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -247,6 +247,13 @@ function guardify_init(): void {
     guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-fraud-check.php', 'Guardify_Fraud_Check');
     if (class_exists('Guardify_Fraud_Check')) {
         Guardify_Fraud_Check::get_instance();
+    }
+
+    // Discord Webhook Notifications - Sends real-time order alerts to Discord
+    // Loaded outside is_admin() because order hooks fire on frontend checkout
+    guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-discord.php', 'Guardify_Discord');
+    if (class_exists('Guardify_Discord')) {
+        Guardify_Discord::get_instance();
     }
 
     // =============================================
