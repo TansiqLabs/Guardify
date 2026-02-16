@@ -26,7 +26,3 @@ Support
 
 - Website: https://tansiqlabs.com
 - Console: https://tansiqlabs.com/console
-
----
-
-## Changelog
