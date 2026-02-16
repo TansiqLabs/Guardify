@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.1 — Patch: Discord admin settings & webhook fixes
+
+### Fixed / Improved
+- Added the Discord settings page in WP Admin (Guardify → Discord): enable/disable, primary webhook URL, per-event webhook overrides, bot name/avatar, and a Test webhook button.
+- `send_webhook()` now resolves per-event webhook URLs and preserves `event_type` across scheduled retries; improved retry handling and logging.
+- Bumped plugin version to 1.2.1.
+
 ## v1.2.0 — Discord Integration Restored & Enriched
 
 ### Critical Fix
