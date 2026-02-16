@@ -115,6 +115,18 @@ class Guardify_Discord {
         return get_option('guardify_discord_webhook_url', '');
     }
 
+    /**
+     * Get the webhook URL for a specific event type.
+     * Falls back to the primary webhook URL if no per-event URL exists.
+     */
+    private function get_webhook_url_for_event(string $event_type): string {
+        $per_event = get_option('guardify_discord_webhook_urls', []);
+        if (is_array($per_event) && !empty($per_event[$event_type])) {
+            return $per_event[$event_type];
+        }
+        return $this->get_webhook_url();
+    }
+
     private function should_notify(string $event_type): bool {
         $events = get_option('guardify_discord_events', [
             'incomplete', 'identified', 'new_order', 

@@ -1964,6 +1964,28 @@ class Guardify_Settings {
             } else {
                 update_option('guardify_steadfast_enabled', '0');
             }
+
+            // Sync Discord webhook settings from TansiqLabs Console
+            if (!empty($data['discord'])) {
+                $discord = $data['discord'];
+                update_option('guardify_discord_enabled', !empty($discord['enabled']) ? '1' : '0');
+                if (!empty($discord['webhooks']) && is_array($discord['webhooks'])) {
+                    $webhooks = $discord['webhooks'];
+                    // Use new_order webhook as the primary URL (fallback for all events)
+                    $primary_url = $webhooks['new_order'] ?? $webhooks['incomplete'] ?? $webhooks['identified'] ?? $webhooks['fraud_block'] ?? $webhooks['security'] ?? '';
+                    update_option('guardify_discord_webhook_url', sanitize_url($primary_url));
+                    // Store per-event webhook URLs
+                    update_option('guardify_discord_webhook_urls', array_map('sanitize_url', array_filter($webhooks)));
+                    // Determine which events are enabled (have a webhook URL)
+                    $enabled_events = [];
+                    if (!empty($webhooks['incomplete'])) $enabled_events[] = 'incomplete';
+                    if (!empty($webhooks['identified'])) $enabled_events[] = 'identified';
+                    if (!empty($webhooks['new_order']))  $enabled_events[] = 'new_order';
+                    if (!empty($webhooks['fraud_block'])) $enabled_events[] = 'fraud_block';
+                    if (!empty($webhooks['security']))   $enabled_events[] = 'security';
+                    update_option('guardify_discord_events', $enabled_events);
+                }
+            }
             
             return array('success' => true, 'license' => $data['license']);
         }
