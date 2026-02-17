@@ -1,22 +1,18 @@
 <?php
 /**
- * Guardify Abandoned Cart / Incomplete Order Capture
- * 
- * ব্রাউজার থেকে চেকআউট ফর্ম ফিলআপ শুরু করলেই ডেটা ক্যাপচার করে।
- * সাবমিট না করলে "Incomplete" স্ট্যাটাসে অর্ডার তৈরি হয়।
- * 
- * Features:
- * - Real-time AJAX field capture as user types (debounced)
- * - Browser close / tab switch detection (visibilitychange + beforeunload)
- * - CartFlows checkout full support (_wcf_flow_id, _wcf_checkout_id)
- * - WooCommerce HPOS compatible
- * - LiteSpeed Cache + Redis safe (uses admin-ajax.php, not REST)
- * - Custom "wc-incomplete" order status registered in WooCommerce
- * - Incomplete orders show in the regular Orders list
- * - Auto-cleanup of old incomplete orders (configurable)
- * 
+ * Guardify Incomplete Orders Handler
+ *
+ * Tracks incomplete WooCommerce checkout forms using a custom database table.
+ * Inspired by OrderGuard's simple and reliable approach:
+ *  - Custom DB table (not WC orders) — lightweight, no order list pollution
+ *  - Captures via woocommerce_checkout_update_order_review + AJAX fallback
+ *  - Phone-centric deduplication (BD market)
+ *  - Cooldown system to prevent duplicates
+ *  - Cart data stored as JSON with variation details
+ *  - Admin page: list, delete, export, convert to WC order
+ *
  * @package Guardify
- * @since 1.0.9
+ * @since 1.2.3
  */
 
 if (!defined('ABSPATH')) {
@@ -24,18 +20,19 @@ if (!defined('ABSPATH')) {
 }
 
 class Guardify_Abandoned_Cart {
+
+    /** Singleton */
     private static ?self $instance = null;
 
-    /**
-     * The session key used in a cookie to track the current draft order
-     */
-    private const COOKIE_NAME = 'guardify_draft_order';
+    /** Custom DB table name (set in constructor) */
+    private string $table_name;
 
-    /**
-     * Custom order status slug (without 'wc-' prefix for registration, with prefix for WC usage)
-     */
-    private const STATUS_SLUG = 'incomplete';
-    private const WC_STATUS   = 'wc-incomplete';
+    /** DB version for schema upgrades */
+    private const DB_VERSION = '1.0';
+
+    // =========================================================================
+    // SINGLETON + CONSTRUCTOR
+    // =========================================================================
 
     public static function get_instance(): self {
         if (null === self::$instance) {
@@ -45,180 +42,142 @@ class Guardify_Abandoned_Cart {
     }
 
     private function __construct() {
-        // Only proceed if feature is enabled
+        global $wpdb;
+        $this->table_name = $wpdb->prefix . 'guardify_incomplete_orders';
+
+        // Create / upgrade table
+        $this->maybe_create_table();
+
         if (!$this->is_enabled()) {
             return;
         }
 
-        // ─── Register custom order status ───
-        add_action('init', [$this, 'register_order_status']);
-        add_filter('wc_order_statuses', [$this, 'add_order_status_to_list']);
-        add_filter('woocommerce_valid_order_statuses_for_payment', [$this, 'allow_payment_for_incomplete']);
-        
-        // Make incomplete orders appear in "All" count on orders page
-        add_filter('woocommerce_reports_order_statuses', [$this, 'add_to_reports']);
-
-        // ─── AJAX endpoints (admin-ajax.php — NOT cached by LiteSpeed) ───
+        // ─── Frontend: capture checkout data ───
+        add_action('woocommerce_checkout_update_order_review', [$this, 'capture_on_review_update']);
         add_action('wp_ajax_guardify_capture_checkout', [$this, 'ajax_capture_checkout']);
         add_action('wp_ajax_nopriv_guardify_capture_checkout', [$this, 'ajax_capture_checkout']);
 
-        // ─── AJAX: Nonce refresh (for cached checkout pages) ───
-        add_action('wp_ajax_guardify_refresh_nonce', [$this, 'ajax_refresh_nonce']);
-        add_action('wp_ajax_nopriv_guardify_refresh_nonce', [$this, 'ajax_refresh_nonce']);
-
-        // ─── Frontend scripts on checkout pages ───
+        // ─── Frontend: enqueue JS ───
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
 
-        // ─── When a real order is placed, clean up the draft ───
-        add_action('woocommerce_checkout_order_created', [$this, 'cleanup_draft_on_order'], 5, 1);
-        add_action('woocommerce_thankyou', [$this, 'cleanup_draft_cookie'], 5);
+        // ─── Mark recovered when real order placed ───
+        add_action('woocommerce_thankyou', [$this, 'mark_recovered_on_thankyou']);
+        add_action('woocommerce_payment_complete', [$this, 'mark_recovered_on_thankyou']);
+        add_action('woocommerce_order_status_changed', [$this, 'handle_order_status_change'], 10, 3);
 
-        // ─── Scheduled cleanup of stale incomplete orders ───
-        add_action('guardify_daily_cleanup', [$this, 'cleanup_old_incomplete_orders']);
+        // ─── Admin: AJAX handlers ───
+        add_action('wp_ajax_guardify_delete_incomplete', [$this, 'ajax_delete_incomplete']);
+        add_action('wp_ajax_guardify_bulk_delete_incomplete', [$this, 'ajax_bulk_delete_incomplete']);
+        add_action('wp_ajax_guardify_export_incomplete', [$this, 'ajax_export_incomplete']);
+        add_action('wp_ajax_guardify_convert_to_order', [$this, 'ajax_convert_to_order']);
 
-        // ─── Admin: Style the status badge in order list ───
-        add_action('admin_head', [$this, 'admin_status_styles']);
-
-        // ─── Bulk actions for incomplete orders ───
-        add_filter('bulk_actions-woocommerce_page_wc-orders', [$this, 'add_bulk_actions']);
-        add_filter('bulk_actions-edit-shop_order', [$this, 'add_bulk_actions']);
-
-        // ─── LiteSpeed Cache: Ensure our AJAX is never cached ───
-        add_action('litespeed_control_set_nocache', [$this, 'maybe_nocache_our_ajax'], 1);
+        // ─── Scheduled cleanup ───
+        if (!wp_next_scheduled('guardify_cleanup_incomplete_orders')) {
+            wp_schedule_event(time(), 'daily', 'guardify_cleanup_incomplete_orders');
+        }
+        add_action('guardify_cleanup_incomplete_orders', [$this, 'cleanup_old_records']);
     }
 
     // =========================================================================
-    // FEATURE TOGGLE
+    // SETTINGS CHECK
     // =========================================================================
 
-    private function is_enabled(): bool {
+    public function is_enabled(): bool {
         return get_option('guardify_abandoned_cart_enabled', '1') === '1';
     }
 
     // =========================================================================
-    // CUSTOM ORDER STATUS
+    // DATABASE TABLE
     // =========================================================================
 
-    /**
-     * Register "Incomplete" order status with WooCommerce
-     */
-    public function register_order_status(): void {
-        register_post_status(self::WC_STATUS, [
-            'label'                     => _x('Incomplete', 'Order status', 'guardify'),
-            'public'                    => true,
-            'exclude_from_search'       => false,
-            'show_in_admin_all_list'    => true,
-            'show_in_admin_status_list' => true,
-            /* translators: %s: number of orders */
-            'label_count'               => _n_noop(
-                'Incomplete <span class="count">(%s)</span>',
-                'Incomplete <span class="count">(%s)</span>',
-                'guardify'
-            ),
-        ]);
+    private function maybe_create_table(): void {
+        $installed_ver = get_option('guardify_incomplete_db_version', '0');
+        if ($installed_ver === self::DB_VERSION) {
+            return;
+        }
+
+        global $wpdb;
+        $charset = $wpdb->get_charset_collate();
+
+        $sql = "CREATE TABLE {$this->table_name} (
+            id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            name        VARCHAR(255)    NULL,
+            phone       VARCHAR(30)     NOT NULL DEFAULT '',
+            email       VARCHAR(255)    NULL,
+            address     TEXT            NULL,
+            city        VARCHAR(100)    NULL,
+            state       VARCHAR(100)    NULL,
+            country     VARCHAR(10)     NULL,
+            postcode    VARCHAR(20)     NULL,
+            cart_data   LONGTEXT        NULL,
+            created_at  DATETIME        NOT NULL,
+            status      VARCHAR(20)     NOT NULL DEFAULT 'pending',
+            PRIMARY KEY (id),
+            KEY idx_phone_status (phone, status),
+            KEY idx_status_created (status, created_at)
+        ) $charset;";
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta($sql);
+
+        update_option('guardify_incomplete_db_version', self::DB_VERSION);
     }
 
     /**
-     * Add "Incomplete" to WooCommerce order status dropdown
+     * Drop the table (called on plugin uninstall)
      */
-    public function add_order_status_to_list(array $statuses): array {
-        $statuses[self::WC_STATUS] = _x('Incomplete', 'Order status', 'guardify');
-        return $statuses;
-    }
-
-    /**
-     * Allow payment for incomplete orders (so customer can complete later)
-     */
-    public function allow_payment_for_incomplete(array $statuses): array {
-        $statuses[] = self::STATUS_SLUG;
-        return $statuses;
-    }
-
-    /**
-     * Include in WC reports
-     */
-    public function add_to_reports(array $statuses): array {
-        $statuses[] = self::STATUS_SLUG;
-        return $statuses;
+    public static function drop_table(): void {
+        global $wpdb;
+        $table = $wpdb->prefix . 'guardify_incomplete_orders';
+        $wpdb->query("DROP TABLE IF EXISTS {$table}");
+        delete_option('guardify_incomplete_db_version');
     }
 
     // =========================================================================
-    // FRONTEND SCRIPTS
+    // FRONTEND: ENQUEUE SCRIPTS
     // =========================================================================
 
-    /**
-     * Enqueue the abandoned cart capture script on checkout pages
-     */
     public function enqueue_scripts(): void {
-        // Only load on checkout pages (standard WooCommerce + CartFlows)
         if (!$this->is_checkout_page()) {
             return;
         }
 
         wp_enqueue_script(
-            'guardify-abandoned-cart',
+            'guardify-incomplete-orders',
             GUARDIFY_PLUGIN_URL . 'assets/js/abandoned-cart.js',
             ['jquery'],
             GUARDIFY_VERSION,
             true
         );
 
-        // Data for JS — uses admin-ajax.php (never cached by LiteSpeed)
-        wp_localize_script('guardify-abandoned-cart', 'guardifyAbandonedCart', [
-            'ajaxurl'   => admin_url('admin-ajax.php'),
-            'nonce'     => wp_create_nonce('guardify_capture_checkout'),
-            'draft_id'  => $this->get_draft_order_id(),
-            'debounce'  => (int) get_option('guardify_abandoned_cart_debounce', 5000),  // ms
-            'capture_on_input' => get_option('guardify_abandoned_cart_capture_on_input', '1') === '1',
+        wp_localize_script('guardify-incomplete-orders', 'guardify_incomplete', [
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce'    => wp_create_nonce('guardify-incomplete-nonce'),
         ]);
-
-        // Inline CSS for frontend (minimal)
-        wp_add_inline_style('woocommerce-general', '
-            /* Guardify: hide draft order notice if any */
-            .woocommerce-info.guardify-draft-notice { display: none; }
-        ');
     }
 
     /**
-     * Detect if current page is a checkout page (WooCommerce or CartFlows)
+     * Detect checkout page (WooCommerce standard + CartFlows)
      */
     private function is_checkout_page(): bool {
-        // Standard WooCommerce checkout
         if (function_exists('is_checkout') && is_checkout()) {
             return true;
         }
 
         // CartFlows checkout detection
-        if (class_exists('Cartflows_Loader')) {
-            global $post;
-            if ($post) {
-                $step_type = get_post_meta($post->ID, 'wcf-step-type', true);
-                if ($step_type === 'checkout') {
-                    return true;
-                }
-            }
-        }
-
-        // CartFlows global checkout
-        if (class_exists('Cartflows_Global_Checkout')) {
-            // If CartFlows has overridden the checkout, WooCommerce's is_checkout() should be true
-            // but as a fallback, check the filter
-            if (has_filter('woocommerce_is_checkout') && apply_filters('woocommerce_is_checkout', false)) {
-                return true;
-            }
-        }
-
-        // Fallback: detect checkout-like pages by shortcode or page content
-        // This covers custom checkout builders (Elementor Pro, Divi, etc.)
         global $post;
-        if ($post && is_a($post, 'WP_Post')) {
-            // Check for WooCommerce checkout shortcode
-            if (has_shortcode($post->post_content, 'woocommerce_checkout')) {
+        if ($post) {
+            $post_content = $post->post_content ?? '';
+            if (
+                has_shortcode($post_content, 'cartflows_checkout') ||
+                has_shortcode($post_content, 'woocommerce_checkout')
+            ) {
                 return true;
             }
-            // Check if current page IS the WooCommerce checkout page by ID
-            $checkout_page_id = wc_get_page_id('checkout');
-            if ($checkout_page_id && $post->ID == $checkout_page_id) {
+
+            // CartFlows stores type in post meta
+            $cf_type = get_post_meta($post->ID, 'wcf-step-type', true);
+            if ($cf_type === 'checkout') {
                 return true;
             }
         }
@@ -226,716 +185,675 @@ class Guardify_Abandoned_Cart {
         return false;
     }
 
-    /**
-     * AJAX endpoint: Refresh the nonce
-     * Used when LiteSpeed/Varnish serves a cached checkout page with a stale nonce.
-     * This endpoint doesn't require a nonce itself (it generates one).
-     */
-    public function ajax_refresh_nonce(): void {
-        // LiteSpeed: don't cache this
-        do_action('litespeed_control_set_nocache', 'guardify nonce refresh');
+    // =========================================================================
+    // CAPTURE: woocommerce_checkout_update_order_review hook
+    // =========================================================================
 
-        wp_send_json_success([
-            'nonce' => wp_create_nonce('guardify_capture_checkout'),
-        ]);
+    /**
+     * Capture incomplete order when WooCommerce fires checkout update.
+     * This hook fires every time checkout form fields are updated.
+     */
+    public function capture_on_review_update($post_data): void {
+        parse_str($post_data, $data);
+
+        $phone = $this->extract_phone($data);
+        if (!$phone) {
+            return; // No valid phone → skip
+        }
+
+        $this->save_incomplete_order($phone, $data);
     }
 
     // =========================================================================
-    // AJAX HANDLER — CAPTURE CHECKOUT DATA
+    // CAPTURE: AJAX handler (fallback from JS)
     // =========================================================================
 
-    /**
-     * AJAX endpoint to capture checkout field data and create/update a draft order.
-     * 
-     * Uses admin-ajax.php which is NEVER cached by LiteSpeed (even with aggressive preset).
-     * Redis object cache is transparent and doesn't affect AJAX.
-     * 
-     * Called when:
-     * 1. Page load (immediately — even with zero form data, just browser metadata)
-     * 2. User fills in a field and moves away (blur event, debounced)
-     * 3. User closes browser / switches tab (visibilitychange / beforeunload via sendBeacon)
-     */
     public function ajax_capture_checkout(): void {
         // Verify nonce
-        if (!check_ajax_referer('guardify_capture_checkout', 'nonce', false)) {
-            error_log('Guardify: Nonce verification failed for capture_checkout');
-            wp_send_json_error(['message' => 'Invalid nonce'], 403);
+        if (!check_ajax_referer('guardify-incomplete-nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Security check failed'], 403);
             return;
         }
 
-        // LiteSpeed: Explicitly tell LiteSpeed not to cache this response
-        do_action('litespeed_control_set_nocache', 'guardify abandoned cart ajax');
-
-        // ── Ensure WC session & cart are available during AJAX ──
-        // admin-ajax.php does NOT automatically load WC session/cart for non-logged-in users.
-        // Without this, WC()->cart is null and no cart items get added to the draft order.
-        if (function_exists('WC') && WC()->session && !WC()->session->has_session()) {
-            WC()->session->set_customer_session_cookie(true);
-        }
-        if (function_exists('WC') && WC()->cart && !did_action('woocommerce_cart_loaded_from_session')) {
-            WC()->cart->get_cart();
-        }
-
-        // Sanitize input fields
-        $data = $this->sanitize_checkout_data($_POST);
-
-        // ── PERFORMANCE FIX: Skip order creation on page_load with zero form data ──
-        // page_load fires every checkout visit. Creating a WC order (DB write + cart loop)
-        // on every visit is extremely heavy. Only create an order once user interacts.
-        $trigger = $data['_capture_trigger'] ?? 'page_load';
-        $has_identity = !empty($data['billing_phone']) || !empty($data['billing_email']) || !empty($data['billing_first_name']);
-
-        if ($trigger === 'page_load' && !$has_identity) {
-            wp_send_json_success([
-                'draft_id'  => 0,
-                'message'   => 'Page load captured (no order created yet)',
-                'new_nonce' => wp_create_nonce('guardify_capture_checkout'),
-            ]);
+        $phone = $this->extract_phone($_POST);
+        if (!$phone) {
+            wp_send_json_error(['message' => 'Invalid or missing phone number']);
             return;
         }
 
-        // Get or create draft order
-        $order_id = $this->get_or_create_draft_order($data);
+        $result = $this->save_incomplete_order($phone, $_POST);
 
-        if (is_wp_error($order_id)) {
-            error_log('Guardify: Draft order creation failed — ' . $order_id->get_error_message());
-            wp_send_json_error(['message' => $order_id->get_error_message()], 500);
-            return;
+        if ($result === 'cooldown') {
+            wp_send_json_success(['message' => 'Phone in cooldown period', 'status' => 'cooldown']);
+        } elseif ($result === 'existing') {
+            wp_send_json_success(['message' => 'Already tracked', 'status' => 'existing']);
+        } elseif ($result === 'new') {
+            wp_send_json_success(['message' => 'Incomplete order captured', 'status' => 'new']);
+        } else {
+            wp_send_json_error(['message' => 'Failed to save']);
         }
-
-        if (!$order_id) {
-            error_log('Guardify: get_or_create_draft_order returned 0/false — trigger=' . ($data['_capture_trigger'] ?? 'unknown'));
-            wp_send_json_error(['message' => 'Failed to create draft order'], 500);
-            return;
-        }
-
-        // Update the draft order with latest data
-        $this->update_draft_order($order_id, $data);
-
-        wp_send_json_success([
-            'draft_id'  => $order_id,
-            'message'   => 'Checkout data captured',
-            'new_nonce' => wp_create_nonce('guardify_capture_checkout'),
-        ]);
     }
 
+    // =========================================================================
+    // CORE: Save Incomplete Order
+    // =========================================================================
+
     /**
-     * Sanitize checkout POST data (billing, shipping, browser metadata, custom fields)
+     * Save or update an incomplete order entry.
+     *
+     * @return string 'new'|'existing'|'cooldown'|'error'
      */
-    private function sanitize_checkout_data(array $raw): array {
-        $fields = [
-            'billing_first_name', 'billing_last_name', 'billing_company',
-            'billing_address_1', 'billing_address_2', 'billing_city',
-            'billing_state', 'billing_postcode', 'billing_country',
-            'billing_email', 'billing_phone',
-            'shipping_first_name', 'shipping_last_name', 'shipping_company',
-            'shipping_address_1', 'shipping_address_2', 'shipping_city',
-            'shipping_state', 'shipping_postcode', 'shipping_country',
-            'order_comments',
-        ];
+    private function save_incomplete_order(string $phone, array $data): string {
+        global $wpdb;
 
-        $data = [];
-        foreach ($fields as $field) {
-            $data[$field] = isset($raw[$field]) ? sanitize_text_field(wp_unslash($raw[$field])) : '';
-        }
-
-        // CartFlows specific fields
-        $data['_wcf_flow_id']     = isset($raw['_wcf_flow_id']) ? absint($raw['_wcf_flow_id']) : 0;
-        $data['_wcf_checkout_id'] = isset($raw['_wcf_checkout_id']) ? absint($raw['_wcf_checkout_id']) : 0;
-
-        // Capture source info
-        $data['_capture_url']     = isset($raw['capture_url']) ? esc_url_raw(wp_unslash($raw['capture_url'])) : '';
-        $data['_capture_trigger'] = isset($raw['capture_trigger']) ? sanitize_text_field($raw['capture_trigger']) : 'field_blur';
-
-        // Existing draft order ID
-        $data['_draft_order_id']  = isset($raw['draft_id']) ? absint($raw['draft_id']) : 0;
-
-        // ─── BROWSER METADATA ───
-        $browser_fields = [
-            'browser_ua', 'browser_language', 'browser_platform',
-            'screen_width', 'screen_height', 'viewport_width', 'viewport_height',
-            'referrer', 'timezone', 'page_url', 'page_title',
-            'connection_type', 'device_memory', 'hardware_concurrency',
-            'touch_support', 'cookie_enabled', 'do_not_track',
-            'color_depth', 'pixel_ratio',
-        ];
-        foreach ($browser_fields as $bf) {
-            $data['_browser_' . $bf] = isset($raw[$bf]) ? sanitize_text_field(wp_unslash($raw[$bf])) : '';
-        }
-
-        // UTM / campaign parameters
-        $utm_fields = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid'];
-        foreach ($utm_fields as $uf) {
-            $key = 'param_' . $uf;
-            $data['_' . $key] = isset($raw[$key]) ? sanitize_text_field(wp_unslash($raw[$key])) : '';
-        }
-
-        // ─── CUSTOM / DYNAMIC CHECKOUT FIELDS ───
-        // Sent as JSON from frontend (size, color, any WooCommerce custom checkout field)
-        $data['_custom_fields'] = [];
-        if (!empty($raw['custom_fields'])) {
-            $custom = json_decode(wp_unslash($raw['custom_fields']), true);
-            if (is_array($custom)) {
-                foreach ($custom as $key => $value) {
-                    $safe_key = sanitize_key($key);
-                    $safe_val = sanitize_text_field($value);
-                    if ($safe_key && $safe_val !== '') {
-                        $data['_custom_fields'][$safe_key] = $safe_val;
-                    }
-                }
+        // ─── Cooldown check ───
+        $cooldown_enabled = get_option('guardify_incomplete_cooldown_enabled', '1');
+        if ($cooldown_enabled === '1') {
+            $cooldown_minutes = (int) get_option('guardify_incomplete_cooldown_minutes', '30');
+            if ($cooldown_minutes > 0 && $this->is_phone_in_cooldown($phone, $cooldown_minutes)) {
+                return 'cooldown';
             }
         }
 
-        return $data;
-    }
+        // ─── Collect cart data ───
+        $cart_data = $this->collect_cart_data();
 
-    /**
-     * Get existing draft order ID or create a new one
-     */
-    private function get_or_create_draft_order(array $data): int|\WP_Error {
-        // 1. Check if JS sent an existing draft ID
-        $draft_id = $data['_draft_order_id'];
+        // ─── Check if this phone already has a pending entry ───
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->table_name} WHERE phone = %s AND status = 'pending'",
+            $phone
+        ));
 
-        // 2. Check cookie
-        if (!$draft_id) {
-            $draft_id = $this->get_draft_order_id();
-        }
-
-        // 3. Validate existing draft
-        if ($draft_id) {
-            $order = wc_get_order($draft_id);
-            if ($order && $order->get_status() === self::STATUS_SLUG) {
-                return $draft_id;
-            }
-            // Draft no longer valid, create new one
-            $draft_id = 0;
-        }
-
-        // 4. Check if there's already a recent incomplete order with same phone/email
-        //    to avoid duplicates (e.g., page refresh)
-        $existing = $this->find_existing_draft($data);
         if ($existing) {
-            $this->set_draft_cookie($existing);
-            return $existing;
+            // Update cart data + fields for existing entry
+            $update = [];
+            $name = $this->sanitize_field($data, 'billing_first_name');
+            if ($name) {
+                $update['name'] = $name;
+            }
+            $email = $this->sanitize_field($data, 'billing_email');
+            if ($email && is_email($email)) {
+                $update['email'] = sanitize_email($email);
+            }
+            $address = $this->sanitize_field($data, 'billing_address_1');
+            if ($address) {
+                $update['address'] = $address;
+            }
+            $city = $this->sanitize_field($data, 'billing_city');
+            if ($city) {
+                $update['city'] = $city;
+            }
+            $state = $this->sanitize_field($data, 'billing_state');
+            if ($state) {
+                $update['state'] = $state;
+            }
+            $country = $this->sanitize_field($data, 'billing_country');
+            if ($country) {
+                $update['country'] = $country;
+            }
+            $postcode = $this->sanitize_field($data, 'billing_postcode');
+            if ($postcode) {
+                $update['postcode'] = $postcode;
+            }
+            if (!empty($cart_data)) {
+                $update['cart_data'] = $cart_data;
+            }
+
+            if (!empty($update)) {
+                $wpdb->update(
+                    $this->table_name,
+                    $update,
+                    ['phone' => $phone, 'status' => 'pending']
+                );
+            }
+
+            return 'existing';
         }
 
-        // 5. Create a new order with "incomplete" status
-        return $this->create_draft_order($data);
+        // ─── Insert new entry ───
+        $insert_data = [
+            'name'       => $this->sanitize_field($data, 'billing_first_name'),
+            'phone'      => $phone,
+            'email'      => is_email($this->sanitize_field($data, 'billing_email') ?: '') ? sanitize_email($data['billing_email']) : '',
+            'address'    => $this->sanitize_field($data, 'billing_address_1'),
+            'city'       => $this->sanitize_field($data, 'billing_city'),
+            'state'      => $this->sanitize_field($data, 'billing_state'),
+            'country'    => $this->sanitize_field($data, 'billing_country'),
+            'postcode'   => $this->sanitize_field($data, 'billing_postcode'),
+            'cart_data'  => $cart_data ?: '',
+            'created_at' => current_time('mysql'),
+            'status'     => 'pending',
+        ];
+
+        $result = $wpdb->insert($this->table_name, $insert_data);
+
+        if ($result) {
+            $insert_id = $wpdb->insert_id;
+
+            // ─── Fire action for Discord notifications ───
+            do_action('guardify_incomplete_order_captured', $insert_id, $insert_data);
+
+            return 'new';
+        }
+
+        return 'error';
+    }
+
+    // =========================================================================
+    // PHONE VALIDATION (BD market)
+    // =========================================================================
+
+    /**
+     * Extract and validate a Bangladeshi phone number from form data.
+     */
+    private function extract_phone(array $data): string {
+        $raw = isset($data['billing_phone']) ? trim($data['billing_phone']) : '';
+        if (empty($raw)) {
+            $raw = isset($data['phone']) ? trim($data['phone']) : '';
+        }
+
+        if (empty($raw)) {
+            return '';
+        }
+
+        // Normalize: strip +88 / 88 prefix, keep 01XXXXXXXXX
+        $normalized = preg_replace('/^(?:\+?88)/', '', $raw);
+
+        // Valid BD mobile: 01[3-9] + 8 digits = 11 digits
+        if (preg_match('/^01[3-9]\d{8}$/', $normalized)) {
+            return $normalized;
+        }
+
+        return '';
     }
 
     /**
-     * Find an existing recent incomplete order with matching phone, email, or IP
+     * Public phone validation (used by other classes)
      */
-    private function find_existing_draft(array $data): int {
-        // If we have phone or email, look for a matching recent draft
-        if (!empty($data['billing_phone']) || !empty($data['billing_email'])) {
-            $args = [
-                'status'  => self::STATUS_SLUG,
-                'limit'   => 1,
-                'orderby' => 'date',
-                'order'   => 'DESC',
-                'date_created' => '>' . gmdate('Y-m-d H:i:s', strtotime('-2 hours')),
-            ];
-
-            // Prefer phone match (more reliable for BD market)
-            if (!empty($data['billing_phone'])) {
-                $args['billing_phone'] = $data['billing_phone'];
-            } elseif (!empty($data['billing_email'])) {
-                $args['billing_email'] = $data['billing_email'];
-            }
-
-            $orders = wc_get_orders($args);
-            if (!empty($orders)) {
-                return $orders[0]->get_id();
-            }
-        }
-
-        // Fallback: find by IP + user agent (for browser-only captures with no form data)
-        $ip = $this->get_client_ip();
-        if ($ip && $ip !== '0.0.0.0') {
-            $orders = wc_get_orders([
-                'status'       => self::STATUS_SLUG,
-                'limit'        => 1,
-                'orderby'      => 'date',
-                'order'        => 'DESC',
-                'date_created' => '>' . gmdate('Y-m-d H:i:s', strtotime('-2 hours')),
-                'customer_ip_address' => $ip,
-            ]);
-
-            if (!empty($orders)) {
-                // Verify no identifiable data on this existing draft (so we don't merge different visitors on same IP)
-                $existing = $orders[0];
-                if (empty($existing->get_billing_phone()) && empty($existing->get_billing_email())) {
-                    return $existing->get_id();
-                }
-            }
-        }
-
-        return 0;
+    public function validate_phone_number(string $phone): bool {
+        return (bool) preg_match('/^(?:\+?88)?01[3-9]\d{8}$/', $phone);
     }
 
-    /**
-     * Create a new WooCommerce order with "incomplete" status
-     */
-    private function create_draft_order(array $data): int|\WP_Error {
-        try {
-            $order = wc_create_order([
-                'status' => self::STATUS_SLUG,
-            ]);
+    // =========================================================================
+    // COOLDOWN SYSTEM
+    // =========================================================================
 
-            if (is_wp_error($order)) {
-                return $order;
+    /**
+     * Check if a phone is in cooldown (recent order placed or recently recovered).
+     */
+    private function is_phone_in_cooldown(string $phone, int $cooldown_minutes): bool {
+        global $wpdb;
+
+        // Normalize phone variations
+        $normalized = preg_replace('/^(?:\+?88)/', '', $phone);
+        $variations = [
+            $normalized,
+            '88' . $normalized,
+            '+88' . $normalized,
+        ];
+
+        // Cookie check (fastest)
+        $phone_hash = md5($normalized);
+        if (isset($_COOKIE['guardify_completed_' . $phone_hash])) {
+            return true;
+        }
+
+        $cutoff = gmdate('Y-m-d H:i:s', strtotime("-{$cooldown_minutes} minutes"));
+
+        // 1. Check recent WooCommerce orders (HPOS compatible)
+        $recent_wc = wc_get_orders([
+            'billing_phone' => $variations,
+            'status'        => ['wc-processing', 'wc-completed', 'wc-on-hold'],
+            'date_created'  => '>' . $cutoff,
+            'limit'         => 1,
+            'return'        => 'ids',
+        ]);
+        if (!empty($recent_wc)) {
+            return true;
+        }
+
+        // 2. Check recently recovered entries in our table
+        $placeholders = implode(',', array_fill(0, count($variations), '%s'));
+        $values = array_merge($variations, [$cutoff]);
+
+        $recovered = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->table_name}
+             WHERE phone IN ({$placeholders})
+             AND status = 'recovered'
+             AND created_at > %s",
+            ...$values
+        ));
+
+        if ($recovered > 0) {
+            return true;
+        }
+
+        return false;
+    }
+
+    // =========================================================================
+    // CART DATA COLLECTION
+    // =========================================================================
+
+    /**
+     * Collect current WooCommerce cart items as JSON.
+     */
+    private function collect_cart_data(): string {
+        if (!function_exists('WC') || !WC()->cart || WC()->cart->is_empty()) {
+            return '';
+        }
+
+        $items = [];
+        foreach (WC()->cart->get_cart() as $cart_item) {
+            $product = $cart_item['data'];
+            if (!$product) {
+                continue;
             }
 
-            // Add cart items if WooCommerce cart is available
-            if (WC()->cart && !WC()->cart->is_empty()) {
-                foreach (WC()->cart->get_cart() as $cart_item) {
-                    $product = $cart_item['data'];
-                    $quantity = $cart_item['quantity'];
-                    
-                    if ($product) {
-                        $order->add_product($product, $quantity, [
-                            'subtotal' => $cart_item['line_subtotal'] ?? '',
-                            'total'    => $cart_item['line_total'] ?? '',
-                        ]);
+            $product_name = $product->get_name();
+            $variation_id = $cart_item['variation_id'] ?? 0;
+            $variation_attributes = [];
+
+            // Append variation details (Size, Color, etc.)
+            if ($variation_id > 0 && !empty($cart_item['variation'])) {
+                foreach ($cart_item['variation'] as $att_key => $att_value) {
+                    $taxonomy = str_replace('attribute_', '', $att_key);
+                    $term_name = $att_value;
+
+                    if (taxonomy_exists($taxonomy)) {
+                        $term = get_term_by('slug', $att_value, $taxonomy);
+                        if ($term && !is_wp_error($term)) {
+                            $term_name = $term->name;
+                        }
                     }
+
+                    $label = wc_attribute_label($taxonomy);
+                    $variation_attributes[] = $label . ': ' . $term_name;
                 }
-                
-                // Set totals from cart
-                $order->set_shipping_total(WC()->cart->get_shipping_total());
-                $order->set_discount_total(WC()->cart->get_discount_total());
-                $order->set_discount_tax(WC()->cart->get_discount_tax());
-                $order->set_cart_tax(WC()->cart->get_cart_contents_tax());
-                $order->set_shipping_tax(WC()->cart->get_shipping_tax());
-                $order->set_total(WC()->cart->get_total('edit'));
+
+                if (!empty($variation_attributes)) {
+                    $product_name .= ' (' . implode(', ', $variation_attributes) . ')';
+                }
             }
 
-            // Store core metadata
-            $order->update_meta_data('_guardify_incomplete', 'yes');
-            $order->update_meta_data('_guardify_capture_time', current_time('mysql'));
-            $order->update_meta_data('_guardify_capture_trigger', $data['_capture_trigger'] ?? 'page_load');
-            $order->update_meta_data('_guardify_capture_url', $data['_capture_url'] ?? '');
-
-            // Store client IP
-            $ip = $this->get_client_ip();
-            $order->set_customer_ip_address($ip);
-
-            // Store user agent (from WC helper)
-            $order->set_customer_user_agent(wc_get_user_agent());
-
-            // ─── BROWSER METADATA ───
-            $this->save_browser_metadata($order, $data);
-
-            // ─── UTM / CAMPAIGN PARAMS ───
-            $this->save_utm_params($order, $data);
-
-            // ─── CUSTOM CHECKOUT FIELDS ───
-            $this->save_custom_fields($order, $data);
-
-            // CartFlows metadata
-            if (!empty($data['_wcf_flow_id'])) {
-                $order->update_meta_data('_wcf_flow_id', $data['_wcf_flow_id']);
-            }
-            if (!empty($data['_wcf_checkout_id'])) {
-                $order->update_meta_data('_wcf_checkout_id', $data['_wcf_checkout_id']);
-            }
-
-            // Add order note
-            $source = !empty($data['_wcf_checkout_id']) ? 'CartFlows Checkout' : 'WooCommerce Checkout';
-            $trigger_label = $this->get_trigger_label($data['_capture_trigger'] ?? 'page_load');
-            $has_form_data = !empty($data['billing_phone']) || !empty($data['billing_email']) || !empty($data['billing_first_name']);
-            $note_icon = $has_form_data ? '🔸' : '🌐';
-            $note_extra = $has_form_data ? '' : ' (browser data only — no form fields filled yet)';
-            $order->add_order_note(
-                sprintf(
-                    /* translators: 1: icon, 2: source, 3: trigger, 4: extra info */
-                    __('%1$s Guardify: Incomplete order captured from %2$s — Trigger: %3$s%4$s', 'guardify'),
-                    $note_icon,
-                    $source,
-                    $trigger_label,
-                    $note_extra
-                ),
-                0,
-                true
-            );
-
-            $order->save();
-
-            // Set cookie for tracking
-            $this->set_draft_cookie($order->get_id());
-
-            // ─── Fire action for Discord / notifications ───
-            do_action('guardify_incomplete_order_created', $order->get_id(), $order, $data);
-
-            return $order->get_id();
-
-        } catch (\Exception $e) {
-            error_log('Guardify Abandoned Cart Error: ' . $e->getMessage());
-            return new \WP_Error('guardify_draft_error', $e->getMessage());
+            $items[] = [
+                'product_id'           => $cart_item['product_id'],
+                'variation_id'         => $variation_id,
+                'name'                 => $product_name,
+                'price'                => $product->get_price(),
+                'quantity'             => $cart_item['quantity'],
+                'variation_attributes' => $variation_attributes,
+            ];
         }
+
+        return !empty($items) ? wp_json_encode($items) : '';
     }
 
-    /**
-     * Update existing draft order with latest checkout field data
-     */
-    private function update_draft_order(int $order_id, array $data): void {
+    // =========================================================================
+    // RECOVERY: Mark as recovered when real order placed
+    // =========================================================================
+
+    public function mark_recovered_on_thankyou($order_id): void {
         $order = wc_get_order($order_id);
         if (!$order) {
             return;
         }
 
-        // Only update if still incomplete
-        if ($order->get_status() !== self::STATUS_SLUG) {
+        $phone = $order->get_billing_phone();
+        $this->mark_recovered_by_phone($phone);
+    }
+
+    public function handle_order_status_change($order_id, $old_status, $new_status): void {
+        $recovery_statuses = ['processing', 'completed', 'on-hold'];
+        if (!in_array($new_status, $recovery_statuses, true)) {
             return;
         }
 
-        // Track if identifiable data was just added (for Discord notification on first fill)
-        $had_phone_before = !empty($order->get_billing_phone());
-        $had_email_before = !empty($order->get_billing_email());
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
 
-        // Update billing fields
-        $billing_setters = [
-            'billing_first_name' => 'set_billing_first_name',
-            'billing_last_name'  => 'set_billing_last_name',
-            'billing_company'    => 'set_billing_company',
-            'billing_address_1'  => 'set_billing_address_1',
-            'billing_address_2'  => 'set_billing_address_2',
-            'billing_city'       => 'set_billing_city',
-            'billing_state'      => 'set_billing_state',
-            'billing_postcode'   => 'set_billing_postcode',
-            'billing_country'    => 'set_billing_country',
-            'billing_email'      => 'set_billing_email',
-            'billing_phone'      => 'set_billing_phone',
-        ];
+        $phone = $order->get_billing_phone();
+        $this->mark_recovered_by_phone($phone);
+    }
 
-        foreach ($billing_setters as $field => $setter) {
-            if (!empty($data[$field])) {
-                $order->$setter($data[$field]);
+    private function mark_recovered_by_phone(string $raw_phone): void {
+        if (empty($raw_phone)) {
+            return;
+        }
+
+        $normalized = preg_replace('/^(?:\+?88)/', '', trim($raw_phone));
+        if (!preg_match('/^01[3-9]\d{8}$/', $normalized)) {
+            return;
+        }
+
+        global $wpdb;
+
+        // Mark all pending entries for this phone as recovered
+        $variations = [$normalized, '88' . $normalized, '+88' . $normalized];
+        $placeholders = implode(',', array_fill(0, count($variations), '%s'));
+
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$this->table_name}
+             SET status = 'recovered'
+             WHERE phone IN ({$placeholders})
+             AND status = 'pending'",
+            ...$variations
+        ));
+
+        // Set cooldown cookie
+        $cooldown_enabled = get_option('guardify_incomplete_cooldown_enabled', '1');
+        if ($cooldown_enabled === '1') {
+            $cooldown_minutes = (int) get_option('guardify_incomplete_cooldown_minutes', '30');
+            if ($cooldown_minutes > 0) {
+                $phone_hash = md5($normalized);
+                $expiry = time() + ($cooldown_minutes * 60);
+
+                if (!headers_sent()) {
+                    setcookie('guardify_completed_' . $phone_hash, '1', $expiry, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
+                }
+                $_COOKIE['guardify_completed_' . $phone_hash] = '1';
+            }
+        }
+    }
+
+    // =========================================================================
+    // ADMIN: Get incomplete orders
+    // =========================================================================
+
+    /**
+     * Get pending incomplete orders for admin display.
+     *
+     * @param int $limit  Records per page
+     * @param int $offset Pagination offset
+     * @return array
+     */
+    public function get_incomplete_orders(int $limit = 20, int $offset = 0): array {
+        global $wpdb;
+
+        $results = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$this->table_name}
+             WHERE status = 'pending'
+             ORDER BY id DESC
+             LIMIT %d OFFSET %d",
+            $limit,
+            $offset
+        ));
+
+        // Process cart data for display
+        foreach ($results as &$row) {
+            $row->raw_timestamp = $row->created_at;
+            $row->created_at_formatted = $this->format_timestamp($row->created_at);
+            $row->time_ago = $this->human_time_diff($row->created_at);
+            $row->products = [];
+            $row->total = 0;
+
+            $cart = !empty($row->cart_data) ? json_decode($row->cart_data, true) : null;
+
+            if ($cart && is_array($cart)) {
+                foreach ($cart as $item) {
+                    $price = (float) ($item['price'] ?? 0);
+                    $qty   = (int) ($item['quantity'] ?? 1);
+
+                    $row->products[] = [
+                        'product_id'   => $item['product_id'] ?? 0,
+                        'variation_id' => $item['variation_id'] ?? 0,
+                        'name'         => $item['name'] ?? 'Unknown Product',
+                        'price'        => $price,
+                        'quantity'     => $qty,
+                    ];
+
+                    $row->total += $price * $qty;
+                }
+            }
+
+            if (empty($row->products)) {
+                $row->products[] = [
+                    'product_id'   => 0,
+                    'variation_id' => 0,
+                    'name'         => __('Product details not available', 'guardify'),
+                    'price'        => 0,
+                    'quantity'     => 1,
+                ];
             }
         }
 
-        // Update shipping fields
-        $shipping_setters = [
-            'shipping_first_name' => 'set_shipping_first_name',
-            'shipping_last_name'  => 'set_shipping_last_name',
-            'shipping_company'    => 'set_shipping_company',
-            'shipping_address_1'  => 'set_shipping_address_1',
-            'shipping_address_2'  => 'set_shipping_address_2',
-            'shipping_city'       => 'set_shipping_city',
-            'shipping_state'      => 'set_shipping_state',
-            'shipping_postcode'   => 'set_shipping_postcode',
-            'shipping_country'    => 'set_shipping_country',
-        ];
+        return $results;
+    }
 
-        foreach ($shipping_setters as $field => $setter) {
-            if (!empty($data[$field])) {
-                $order->$setter($data[$field]);
+    /**
+     * Count all pending incomplete orders.
+     */
+    public function get_incomplete_orders_count(): int {
+        global $wpdb;
+        return (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$this->table_name} WHERE status = 'pending'"
+        );
+    }
+
+    // =========================================================================
+    // ADMIN: AJAX — Delete
+    // =========================================================================
+
+    public function ajax_delete_incomplete(): void {
+        check_ajax_referer('guardify-incomplete-nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error('Permission denied');
+        }
+
+        $id = (int) ($_POST['id'] ?? 0);
+        if (!$id) {
+            wp_send_json_error('Invalid ID');
+        }
+
+        global $wpdb;
+        $deleted = $wpdb->delete($this->table_name, ['id' => $id], ['%d']);
+
+        if ($deleted) {
+            wp_send_json_success(['message' => 'Deleted successfully']);
+        } else {
+            wp_send_json_error('Delete failed');
+        }
+    }
+
+    public function ajax_bulk_delete_incomplete(): void {
+        check_ajax_referer('guardify-incomplete-nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error('Permission denied');
+        }
+
+        $ids = isset($_POST['ids']) ? array_map('intval', (array) $_POST['ids']) : [];
+        if (empty($ids)) {
+            wp_send_json_error('No IDs provided');
+        }
+
+        global $wpdb;
+        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+        $deleted = $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$this->table_name} WHERE id IN ({$placeholders})",
+            ...$ids
+        ));
+
+        wp_send_json_success(['message' => sprintf('%d record(s) deleted', $deleted)]);
+    }
+
+    // =========================================================================
+    // ADMIN: AJAX — Export CSV
+    // =========================================================================
+
+    public function ajax_export_incomplete(): void {
+        check_ajax_referer('guardify-incomplete-nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die('Permission denied');
+        }
+
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            "SELECT * FROM {$this->table_name} WHERE status = 'pending' ORDER BY id DESC",
+            ARRAY_A
+        );
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename=guardify-incomplete-orders-' . gmdate('Y-m-d') . '.csv');
+
+        $out = fopen('php://output', 'w');
+        // Header row
+        fputcsv($out, ['ID', 'Name', 'Phone', 'Email', 'Address', 'City', 'State', 'Country', 'Postcode', 'Products', 'Total', 'Date', 'Status']);
+
+        foreach ($rows as $row) {
+            $cart = json_decode($row['cart_data'], true);
+            $products = '';
+            $total = 0;
+            if ($cart && is_array($cart)) {
+                $parts = [];
+                foreach ($cart as $item) {
+                    $price = (float) ($item['price'] ?? 0);
+                    $qty = (int) ($item['quantity'] ?? 1);
+                    $parts[] = ($item['name'] ?? 'Unknown') . ' x' . $qty . ' @ ' . $price;
+                    $total += $price * $qty;
+                }
+                $products = implode('; ', $parts);
             }
+
+            fputcsv($out, [
+                $row['id'],
+                $row['name'],
+                $row['phone'],
+                $row['email'],
+                $row['address'],
+                $row['city'],
+                $row['state'],
+                $row['country'],
+                $row['postcode'],
+                $products,
+                $total,
+                $row['created_at'],
+                $row['status'],
+            ]);
         }
 
-        // Order notes
-        if (!empty($data['order_comments'])) {
-            $order->set_customer_note($data['order_comments']);
+        fclose($out);
+        exit;
+    }
+
+    // =========================================================================
+    // ADMIN: AJAX — Convert to WooCommerce Order
+    // =========================================================================
+
+    public function ajax_convert_to_order(): void {
+        check_ajax_referer('guardify-incomplete-nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Permission denied']);
         }
 
-        // Update capture metadata
-        $order->update_meta_data('_guardify_last_update', current_time('mysql'));
-        $order->update_meta_data('_guardify_capture_trigger', $data['_capture_trigger'] ?? 'update');
+        global $wpdb;
 
-        // Update CartFlows meta if present
-        if (!empty($data['_wcf_flow_id'])) {
-            $order->update_meta_data('_wcf_flow_id', $data['_wcf_flow_id']);
-        }
-        if (!empty($data['_wcf_checkout_id'])) {
-            $order->update_meta_data('_wcf_checkout_id', $data['_wcf_checkout_id']);
+        $id = (int) ($_POST['id'] ?? 0);
+        $status = sanitize_text_field($_POST['status'] ?? 'pending');
+        $valid_statuses = ['pending', 'processing', 'completed', 'on-hold'];
+        if (!in_array($status, $valid_statuses, true)) {
+            $status = 'pending';
         }
 
-        // ─── BROWSER METADATA ───
-        $this->save_browser_metadata($order, $data);
+        if (!$id) {
+            wp_send_json_error(['message' => 'Invalid ID']);
+            return;
+        }
 
-        // ─── UTM / CAMPAIGN PARAMS ───
-        $this->save_utm_params($order, $data);
+        $row = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$this->table_name} WHERE id = %d", $id),
+            ARRAY_A
+        );
 
-        // ─── CUSTOM CHECKOUT FIELDS ───
-        $this->save_custom_fields($order, $data);
+        if (!$row) {
+            wp_send_json_error(['message' => 'Record not found']);
+            return;
+        }
 
-        // Try to update cart items if cart available and order has no items yet
-        if ($order->get_item_count() === 0 && WC()->cart && !WC()->cart->is_empty()) {
-            foreach (WC()->cart->get_cart() as $cart_item) {
-                $product = $cart_item['data'];
-                $quantity = $cart_item['quantity'];
-                
+        $cart = json_decode($row['cart_data'], true);
+        if (empty($cart) || !is_array($cart)) {
+            wp_send_json_error(['message' => 'No cart data available']);
+            return;
+        }
+
+        try {
+            $order = wc_create_order();
+
+            // Add products
+            foreach ($cart as $item) {
+                $product_id = (int) ($item['product_id'] ?? 0);
+                $variation_id = (int) ($item['variation_id'] ?? 0);
+                $quantity = max(1, (int) ($item['quantity'] ?? 1));
+
+                $product = $variation_id > 0 ? wc_get_product($variation_id) : wc_get_product($product_id);
+                if (!$product) {
+                    $product = wc_get_product($product_id);
+                }
                 if ($product) {
-                    $order->add_product($product, $quantity, [
-                        'subtotal' => $cart_item['line_subtotal'] ?? '',
-                        'total'    => $cart_item['line_total'] ?? '',
-                    ]);
+                    $order->add_product($product, $quantity);
                 }
             }
-            
-            $order->set_shipping_total(WC()->cart->get_shipping_total());
-            $order->set_discount_total(WC()->cart->get_discount_total());
-            $order->set_cart_tax(WC()->cart->get_cart_contents_tax());
-            $order->set_total(WC()->cart->get_total('edit'));
+
+            // Set billing / shipping
+            $billing = [
+                'first_name' => $row['name'] ?: 'Guest',
+                'phone'      => $row['phone'],
+                'email'      => $row['email'] ?: '',
+                'address_1'  => $row['address'] ?: '',
+                'city'       => $row['city'] ?: '',
+                'state'      => $row['state'] ?: '',
+                'country'    => $row['country'] ?: 'BD',
+                'postcode'   => $row['postcode'] ?: '',
+            ];
+            $order->set_address($billing, 'billing');
+            $order->set_address($billing, 'shipping');
+
+            $order->set_payment_method('cod');
+            $order->calculate_totals();
+            $order->set_status($status);
+            $order->save();
+
+            // Mark as recovered
+            $wpdb->update(
+                $this->table_name,
+                ['status' => 'recovered'],
+                ['id' => $id],
+                ['%s'],
+                ['%d']
+            );
+
+            wp_send_json_success([
+                'message'  => sprintf('WooCommerce Order #%d created (%s)', $order->get_id(), ucfirst($status)),
+                'order_id' => $order->get_id(),
+            ]);
+
+        } catch (\Exception $e) {
+            wp_send_json_error(['message' => 'Error: ' . $e->getMessage()]);
         }
-
-        $order->save();
-
-        // ─── Fire action when identifiable data is first added (phone or email) ───
-        $has_phone_now = !empty($data['billing_phone']);
-        $has_email_now = !empty($data['billing_email']);
-        if ((!$had_phone_before && $has_phone_now) || (!$had_email_before && $has_email_now)) {
-            do_action('guardify_incomplete_order_identified', $order_id, $order, $data);
-        }
-
-        // Always fire update action
-        do_action('guardify_incomplete_order_updated', $order_id, $order, $data);
     }
 
     // =========================================================================
-    // CLEANUP
+    // SCHEDULED CLEANUP
     // =========================================================================
 
-    /**
-     * When a real order is placed, trash the corresponding draft order
-     */
-    public function cleanup_draft_on_order($order): void {
-        $draft_id = $this->get_draft_order_id();
-        
-        if (!$draft_id) {
-            return;
-        }
-
-        $draft_order = wc_get_order($draft_id);
-        if (!$draft_order) {
-            return;
-        }
-
-        // Only delete if it's still an incomplete order
-        if ($draft_order->get_status() === self::STATUS_SLUG) {
-            // Check if the new real order has the same phone/email
-            $new_order = is_object($order) ? $order : wc_get_order($order);
-            if ($new_order) {
-                $same_phone = $draft_order->get_billing_phone() === $new_order->get_billing_phone();
-                $same_email = $draft_order->get_billing_email() === $new_order->get_billing_email();
-                
-                if ($same_phone || $same_email) {
-                    $draft_order->add_order_note(
-                        sprintf(
-                            __('🔹 Guardify: Customer completed checkout. Real order #%s created. This incomplete order is now trashed.', 'guardify'),
-                            $new_order->get_id()
-                        )
-                    );
-                    $draft_order->delete(false); // move to trash, not permanent delete
-                }
-            }
-        }
-
-        $this->clear_draft_cookie();
-    }
-
-    /**
-     * Clear draft cookie on thank you page
-     */
-    public function cleanup_draft_cookie($order_id): void {
-        $this->clear_draft_cookie();
-    }
-
-    /**
-     * Daily cleanup: Delete incomplete orders older than configured days
-     */
-    public function cleanup_old_incomplete_orders(): void {
-        $retention_days = (int) get_option('guardify_abandoned_cart_retention_days', 30);
-        
+    public function cleanup_old_records(): void {
+        $retention_days = (int) get_option('guardify_abandoned_cart_retention_days', '30');
         if ($retention_days < 1) {
             return; // 0 = keep forever
         }
 
+        global $wpdb;
         $cutoff = gmdate('Y-m-d H:i:s', strtotime("-{$retention_days} days"));
 
-        $orders = wc_get_orders([
-            'status'       => self::STATUS_SLUG,
-            'date_created' => '<' . $cutoff,
-            'limit'        => 50, // Process in batches
-        ]);
-
-        foreach ($orders as $order) {
-            $order->add_order_note(
-                sprintf(
-                    __('🗑️ Guardify: Auto-deleted incomplete order after %d days.', 'guardify'),
-                    $retention_days
-                )
-            );
-            $order->delete(true); // permanent delete for old ones
-        }
-    }
-
-    // =========================================================================
-    // COOKIE MANAGEMENT
-    // =========================================================================
-
-    private function get_draft_order_id(): int {
-        if (isset($_COOKIE[self::COOKIE_NAME])) {
-            return absint($_COOKIE[self::COOKIE_NAME]);
-        }
-        return 0;
-    }
-
-    private function set_draft_cookie(int $order_id): void {
-        // Set cookie for 2 hours (matches draft dedup window)
-        if (!headers_sent()) {
-            setcookie(
-                self::COOKIE_NAME,
-                (string) $order_id,
-                time() + (2 * HOUR_IN_SECONDS),
-                COOKIEPATH,
-                COOKIE_DOMAIN,
-                is_ssl(),
-                true // httpOnly — JS reads order ID from localized data, not cookie
-            );
-        }
-        // Also set in $_COOKIE for the current request
-        $_COOKIE[self::COOKIE_NAME] = (string) $order_id;
-    }
-
-    private function clear_draft_cookie(): void {
-        if (!headers_sent()) {
-            setcookie(self::COOKIE_NAME, '', time() - HOUR_IN_SECONDS, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
-        }
-        unset($_COOKIE[self::COOKIE_NAME]);
-    }
-
-    // =========================================================================
-    // ADMIN STYLING
-    // =========================================================================
-
-    /**
-     * Add CSS for the "Incomplete" status badge in WooCommerce admin orders list
-     */
-    public function admin_status_styles(): void {
-        $screen = get_current_screen();
-        if (!$screen) return;
-        
-        // WooCommerce orders page (HPOS or legacy)
-        $is_orders_page = in_array($screen->id, [
-            'woocommerce_page_wc-orders',
-            'edit-shop_order',
-        ], true);
-
-        if (!$is_orders_page) return;
-
-        ?>
-        <style>
-            /* Guardify Incomplete Order Status Badge */
-            .order-status.status-incomplete,
-            mark.order-status.status-incomplete {
-                background: #f8d7da !important;
-                color: #721c24 !important;
-                border-radius: 3px;
-                padding: 2px 8px;
-                font-weight: 600;
-                border: none;
-            }
-            mark.order-status.status-incomplete::after {
-                content: '';
-                display: none;
-            }
-            /* HPOS table status */
-            .wc-orders-list-table .order-status.status-incomplete {
-                background: #f8d7da !important;
-                color: #721c24 !important;
-            }
-            /* Incomplete order row highlight */
-            tr.status-incomplete {
-                background-color: #fff5f5 !important;
-            }
-            tr.status-incomplete:hover {
-                background-color: #fee !important;
-            }
-            /* Status filter count */
-            .subsubsub .incomplete-orders .count {
-                color: #dc3545;
-            }
-        </style>
-        <?php
-    }
-
-    /**
-     * Add bulk actions for incomplete orders
-     */
-    public function add_bulk_actions(array $actions): array {
-        $actions['guardify_delete_incomplete'] = __('Delete Incomplete Orders', 'guardify');
-        return $actions;
-    }
-
-    // =========================================================================
-    // LITESPEED CACHE COMPATIBILITY
-    // =========================================================================
-
-    /**
-     * Ensure our AJAX actions are marked no-cache
-     * (admin-ajax.php is already not cached by default, but this is defense-in-depth)
-     */
-    public function maybe_nocache_our_ajax(): void {
-        if (wp_doing_ajax()) {
-            $action = isset($_REQUEST['action']) ? sanitize_text_field($_REQUEST['action']) : '';
-            if ($action === 'guardify_capture_checkout') {
-                do_action('litespeed_control_set_nocache', 'guardify abandoned cart capture');
-            }
-        }
-    }
-
-    // =========================================================================
-    // METADATA SAVE HELPERS
-    // =========================================================================
-
-    /**
-     * Save browser metadata to order meta
-     */
-    private function save_browser_metadata(\WC_Order $order, array $data): void {
-        $browser_fields = [
-            'browser_ua', 'browser_language', 'browser_platform',
-            'screen_width', 'screen_height', 'viewport_width', 'viewport_height',
-            'referrer', 'timezone', 'page_url', 'page_title',
-            'connection_type', 'device_memory', 'hardware_concurrency',
-            'touch_support', 'cookie_enabled', 'do_not_track',
-            'color_depth', 'pixel_ratio',
-        ];
-
-        foreach ($browser_fields as $bf) {
-            $key = '_browser_' . $bf;
-            if (!empty($data[$key])) {
-                $order->update_meta_data('_guardify' . $key, $data[$key]);
-            }
-        }
-    }
-
-    /**
-     * Save UTM / campaign parameters to order meta
-     */
-    private function save_utm_params(\WC_Order $order, array $data): void {
-        $utm_fields = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid'];
-        foreach ($utm_fields as $uf) {
-            $key = '_param_' . $uf;
-            if (!empty($data[$key])) {
-                $order->update_meta_data('_guardify' . $key, $data[$key]);
-            }
-        }
-    }
-
-    /**
-     * Save custom / dynamic checkout fields (size, color, etc.) to order meta
-     */
-    private function save_custom_fields(\WC_Order $order, array $data): void {
-        if (!empty($data['_custom_fields']) && is_array($data['_custom_fields'])) {
-            // Store as a serialized array for easy retrieval
-            $order->update_meta_data('_guardify_custom_fields', $data['_custom_fields']);
-
-            // Also store each field individually for WooCommerce admin display
-            foreach ($data['_custom_fields'] as $field_key => $field_value) {
-                $order->update_meta_data('_guardify_cf_' . $field_key, $field_value);
-            }
-        }
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$this->table_name} WHERE status = 'pending' AND created_at < %s LIMIT 100",
+            $cutoff
+        ));
     }
 
     // =========================================================================
@@ -943,44 +861,41 @@ class Guardify_Abandoned_Cart {
     // =========================================================================
 
     /**
-     * Get client IP (same logic as cooldown class)
+     * Safely extract and sanitize a field from POST data.
      */
-    private function get_client_ip(): string {
-        $headers = [
-            'HTTP_CF_CONNECTING_IP',    // Cloudflare
-            'HTTP_X_REAL_IP',           // Nginx / OpenLiteSpeed
-            'HTTP_X_FORWARDED_FOR',     // General proxy
-            'REMOTE_ADDR',              // Direct connection
-        ];
-
-        foreach ($headers as $header) {
-            if (!empty($_SERVER[$header])) {
-                $ip = $_SERVER[$header];
-                // X-Forwarded-For may contain multiple IPs
-                if (strpos($ip, ',') !== false) {
-                    $ip = trim(explode(',', $ip)[0]);
-                }
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    return $ip;
-                }
-            }
+    private function sanitize_field(array $data, string $key): string {
+        $val = isset($data[$key]) ? trim($data[$key]) : '';
+        if ($val === '' || $val === 'undefined') {
+            return '';
         }
-
-        return '0.0.0.0';
+        return sanitize_text_field($val);
     }
 
     /**
-     * Get human-readable trigger label
+     * Format DB timestamp for display using WP settings.
      */
-    private function get_trigger_label(string $trigger): string {
-        return match ($trigger) {
-            'page_load'         => __('পেইজ লোড (Page Load)', 'guardify'),
-            'field_blur'        => __('ফিল্ড ফিলআপ (Field Blur)', 'guardify'),
-            'page_hide'         => __('ব্রাউজার ট্যাব সুইচ (Visibility Hidden)', 'guardify'),
-            'before_unload'     => __('ব্রাউজার বন্ধ/নেভিগেট (Before Unload)', 'guardify'),
-            'periodic'          => __('পিরিয়ডিক সেভ (Auto-save)', 'guardify'),
-            'phone_complete'    => __('ফোন নাম্বার এন্ট্রি (Phone Complete)', 'guardify'),
-            default             => $trigger,
-        };
+    private function format_timestamp(string $timestamp): string {
+        if (empty($timestamp)) {
+            return '';
+        }
+        return date_i18n(
+            get_option('date_format') . ' ' . get_option('time_format'),
+            strtotime($timestamp)
+        );
+    }
+
+    /**
+     * Human-readable time difference.
+     */
+    private function human_time_diff(string $timestamp): string {
+        if (empty($timestamp)) {
+            return '';
+        }
+        $time = strtotime($timestamp);
+        $now  = current_time('timestamp');
+        if ($time > $now) {
+            return __('just now', 'guardify');
+        }
+        return human_time_diff($time, $now) . ' ' . __('ago', 'guardify');
     }
 }

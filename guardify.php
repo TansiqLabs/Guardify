@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast courier integration, and order tracking features.
- * Version: 1.2.2
+ * Version: 1.2.3
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.2.2');
+define('GUARDIFY_VERSION', '1.2.3');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -474,9 +474,9 @@ function guardify_activate(): void {
 
         // Abandoned Cart / Incomplete Order Capture
         'guardify_abandoned_cart_enabled' => '1',
-        'guardify_abandoned_cart_debounce' => '5000',
-        'guardify_abandoned_cart_capture_on_input' => '1',
         'guardify_abandoned_cart_retention_days' => '30',
+        'guardify_incomplete_cooldown_enabled' => '1',
+        'guardify_incomplete_cooldown_minutes' => '30',
 
     );
 

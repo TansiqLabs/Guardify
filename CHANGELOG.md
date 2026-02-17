@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.2.3 — Incomplete Order Rewrite: Custom DB Table
+
+### Changed
+- **Custom Database Table:** Incomplete orders are now stored in a dedicated `{prefix}_guardify_incomplete_orders` table instead of creating WooCommerce orders with `wc-incomplete` status. This eliminates WC order pollution and improves performance.
+- **Settings Page Rewrite:** The Abandoned Cart admin page now reads from the custom table via `Guardify_Abandoned_Cart::get_instance()` methods. Displays ID, Name, Phone, Products, Total, and Time ago columns.
+- **New Actions:** Added Delete, Convert to WC Order, Bulk Delete, and CSV Export buttons with AJAX handling directly on the settings page.
+- **Cooldown System:** Added `guardify_incomplete_cooldown_enabled` and `guardify_incomplete_cooldown_minutes` settings to prevent duplicate captures from the same phone number within a configurable time window.
+- **Discord Events:** Consolidated `incomplete`/`identified` events into a single `incomplete` event (`guardify_incomplete_order_captured` hook). Removed `identified` event entirely.
+
+### Removed
+- Removed `capture_on_input` and `debounce` settings (no longer needed with new capture logic).
+- Removed WooCommerce Orders page link for incomplete orders (no longer a WC order status).
+- Removed `guardify_incomplete_order_created` and `guardify_incomplete_order_identified` Discord hooks.
+
+### Technical
+- Rewritten: `includes/class-guardify-abandoned-cart.php` — Full rewrite using custom DB table (`901 lines`)
+- Rewritten: `assets/js/abandoned-cart.js` — New JS capture logic (`~165 lines`)
+- Updated: `includes/class-guardify-discord.php` — New `guardify_incomplete_order_captured` hook
+- Updated: `includes/class-guardify-settings.php` — New `render_abandoned_cart_page()`, updated `save_settings()`, updated Discord `$all_events`
+- Updated: `guardify.php` — Version bump, updated defaults
+- Version: 1.2.2 → 1.2.3
+
 ## v1.2.2 — Discord: Single Message, Taka Fix & Full Details
 
 ### Fixed
