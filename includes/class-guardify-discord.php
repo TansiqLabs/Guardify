@@ -83,9 +83,8 @@ class Guardify_Discord {
             return;
         }
 
-        // ─── Incomplete order events (from Guardify_Abandoned_Cart) ───
-        add_action('guardify_incomplete_order_created', [$this, 'on_incomplete_created'], 20, 3);
-        add_action('guardify_incomplete_order_identified', [$this, 'on_incomplete_identified'], 20, 3);
+        // ─── Incomplete order captured (from Guardify_Abandoned_Cart custom table) ───
+        add_action('guardify_incomplete_order_captured', [$this, 'on_incomplete_captured'], 20, 2);
 
         // ─── Real order placed ───
         add_action('woocommerce_checkout_order_created', [$this, 'on_order_created'], 20, 1);
@@ -240,45 +239,93 @@ class Guardify_Discord {
     // =========================================================================
 
     /**
-     * New incomplete order created (may have only browser data)
+     * Incomplete order captured (custom table, not a WC_Order).
+     * Data comes from guardify_incomplete_orders table.
      */
-    public function on_incomplete_created(int $order_id, \WC_Order $order, array $data): void {
+    public function on_incomplete_captured(int $record_id, array $data): void {
         if (!$this->should_notify('incomplete')) {
             return;
         }
 
-        $has_form = !empty($order->get_billing_phone()) || !empty($order->get_billing_email());
-        $event = $has_form ? 'incomplete_with_data' : 'incomplete_created';
-        
-        $this->send_notification($order, [
-            'event'       => $event,
-            'title'       => self::STATUS_EMOJIS[$event] . ($has_form 
-                ? ' Incomplete Order #' . $order_id 
-                : ' New Visitor — Incomplete #' . $order_id),
-            'description' => $has_form 
-                ? 'Customer started checkout but did not complete the order.'
-                : 'Visitor landed on checkout page. No form data yet — browser metadata captured.',
-            'color'       => self::STATUS_COLORS[$event],
-            'capture_data' => $data,
-        ]);
-    }
+        $event = 'incomplete_with_data';
 
-    /**
-     * Incomplete order now has identifiable data (phone or email just filled)
-     */
-    public function on_incomplete_identified(int $order_id, \WC_Order $order, array $data): void {
-        if (!$this->should_notify('identified')) {
-            return;
+        // Build fields from raw data
+        $fields = [];
+
+        // Customer info
+        $customer_parts = [];
+        if (!empty($data['name'])) {
+            $customer_parts[] = "**Name:** {$data['name']}";
+        }
+        if (!empty($data['phone'])) {
+            $customer_parts[] = "**Phone:** {$data['phone']}";
+        }
+        if (!empty($data['email'])) {
+            $customer_parts[] = "**Email:** {$data['email']}";
+        }
+        $address_parts = array_filter([
+            $data['address'] ?? '',
+            $data['city'] ?? '',
+            $data['state'] ?? '',
+            $data['postcode'] ?? '',
+            $data['country'] ?? '',
+        ]);
+        if (!empty($address_parts)) {
+            $customer_parts[] = "**Address:** " . implode(', ', $address_parts);
+        }
+        if (!empty($customer_parts)) {
+            $fields[] = [
+                'name'   => '👤 Customer Info',
+                'value'  => mb_substr(implode("\n", $customer_parts), 0, self::FIELD_VALUE_LIMIT),
+                'inline' => false,
+            ];
         }
 
-        $this->send_notification($order, [
-            'event'       => 'incomplete_identified',
-            'title'       => '🟠 Customer Identified — Incomplete #' . $order_id,
-            'description' => 'Customer filled phone/email but has not placed the order yet.',
-            'color'       => self::STATUS_COLORS['incomplete_identified'],
-            'capture_data' => $data,
-            'include_fraud' => true,
-        ]);
+        // Cart items
+        if (!empty($data['cart_data'])) {
+            $cart = is_string($data['cart_data']) ? json_decode($data['cart_data'], true) : $data['cart_data'];
+            if ($cart && is_array($cart)) {
+                $cart_lines = [];
+                $total = 0;
+                foreach ($cart as $item) {
+                    $name  = $item['name'] ?? 'Unknown';
+                    $price = (float) ($item['price'] ?? 0);
+                    $qty   = (int) ($item['quantity'] ?? 1);
+                    $line_total = $price * $qty;
+                    $total += $line_total;
+                    $cart_lines[] = "• {$name} × {$qty} — " . $this->format_price($line_total);
+                }
+                $cart_lines[] = "\n**Total: " . $this->format_price($total) . '**';
+
+                $fields[] = [
+                    'name'   => '🛒 Cart Items',
+                    'value'  => mb_substr(implode("\n", $cart_lines), 0, self::FIELD_VALUE_LIMIT),
+                    'inline' => false,
+                ];
+            }
+        }
+
+        // Date
+        $fields[] = [
+            'name'   => '📅 Captured',
+            'value'  => $data['created_at'] ?? current_time('mysql'),
+            'inline' => true,
+        ];
+
+        $embed = [
+            'title'       => self::STATUS_EMOJIS[$event] . " Incomplete Order #{$record_id}",
+            'description' => 'Customer started checkout but did not place the order.',
+            'color'       => self::STATUS_COLORS[$event],
+            'timestamp'   => gmdate('c'),
+            'fields'      => array_slice($fields, 0, 25),
+            'footer'      => [
+                'text' => 'Guardify v' . (defined('GUARDIFY_VERSION') ? GUARDIFY_VERSION : '1.2.3') . ' • ' . wp_parse_url(home_url(), PHP_URL_HOST),
+            ],
+        ];
+
+        $this->send_webhook([
+            'embeds' => [$embed],
+        ], 1, $event);
     }
 
     /**
@@ -293,11 +340,6 @@ class Guardify_Discord {
             $order = wc_get_order($order);
         }
         if (!$order) return;
-
-        // Skip incomplete orders (they have their own handler)
-        if ($order->get_status() === 'incomplete') {
-            return;
-        }
 
         // Mark that we already sent the new_order notification
         $order->update_meta_data('_guardify_discord_new_order_sent', '1');

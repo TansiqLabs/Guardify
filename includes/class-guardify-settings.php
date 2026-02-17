@@ -296,14 +296,15 @@ class Guardify_Settings {
             update_option('guardify_notification_email', sanitize_email($_POST['guardify_notification_email']));
         }
 
-        // Abandoned Cart / Incomplete Order Capture
+        // Incomplete Order Capture
         update_option('guardify_abandoned_cart_enabled', isset($_POST['guardify_abandoned_cart_enabled']) ? '1' : '0');
-        update_option('guardify_abandoned_cart_capture_on_input', isset($_POST['guardify_abandoned_cart_capture_on_input']) ? '1' : '0');
-        if (isset($_POST['guardify_abandoned_cart_debounce'])) {
-            update_option('guardify_abandoned_cart_debounce', absint($_POST['guardify_abandoned_cart_debounce']));
-        }
         if (isset($_POST['guardify_abandoned_cart_retention_days'])) {
             update_option('guardify_abandoned_cart_retention_days', absint($_POST['guardify_abandoned_cart_retention_days']));
+        }
+        update_option('guardify_incomplete_cooldown_enabled', isset($_POST['guardify_incomplete_cooldown_enabled']) ? '1' : '0');
+        if (isset($_POST['guardify_incomplete_cooldown_minutes'])) {
+            $cd = max(5, min(43200, absint($_POST['guardify_incomplete_cooldown_minutes'])));
+            update_option('guardify_incomplete_cooldown_minutes', $cd);
         }
 
         // Discord Webhook Notification Settings
@@ -317,7 +318,7 @@ class Guardify_Settings {
             }
             // Per-event webhook URLs (optional overrides)
             $per_event_urls = [];
-            $event_keys = ['incomplete', 'identified', 'new_order', 'processing', 'completed', 'on-hold', 'cancelled', 'refunded', 'failed', 'fraud_block'];
+            $event_keys = ['incomplete', 'new_order', 'processing', 'completed', 'on-hold', 'cancelled', 'refunded', 'failed', 'fraud_block'];
             foreach ($event_keys as $ek) {
                 $field = 'guardify_discord_webhook_' . $ek;
                 if (isset($_POST[$field]) && !empty(trim($_POST[$field]))) {
@@ -2675,31 +2676,20 @@ class Guardify_Settings {
      */
     public function render_abandoned_cart_page() {
         $enabled           = get_option('guardify_abandoned_cart_enabled', '1');
-        $capture_on_input  = get_option('guardify_abandoned_cart_capture_on_input', '1');
-        $debounce          = get_option('guardify_abandoned_cart_debounce', '5000');
         $retention_days    = get_option('guardify_abandoned_cart_retention_days', '30');
+        $cooldown_enabled  = get_option('guardify_incomplete_cooldown_enabled', '1');
+        $cooldown_minutes  = get_option('guardify_incomplete_cooldown_minutes', '30');
 
-        // Count incomplete orders
-        $incomplete_count = 0;
-        if (function_exists('wc_get_orders')) {
-            $orders = wc_get_orders([
-                'status' => 'incomplete',
-                'limit'  => -1,
-                'return' => 'ids',
-            ]);
-            $incomplete_count = count($orders);
-        }
-
-        // Recent incomplete orders (last 10)
+        // Get data from custom DB table
+        $incomplete_count  = 0;
         $recent_incomplete = [];
-        if (function_exists('wc_get_orders')) {
-            $recent_incomplete = wc_get_orders([
-                'status'  => 'incomplete',
-                'limit'   => 10,
-                'orderby' => 'date',
-                'order'   => 'DESC',
-            ]);
+        if (class_exists('Guardify_Abandoned_Cart')) {
+            $cart_instance     = Guardify_Abandoned_Cart::get_instance();
+            $incomplete_count  = $cart_instance->get_incomplete_orders_count();
+            $recent_incomplete = $cart_instance->get_incomplete_orders(10, 0);
         }
+
+        $nonce = wp_create_nonce('guardify-incomplete-nonce');
         ?>
         <div class="wrap guardify-settings-wrap">
             <div class="guardify-header" style="background: linear-gradient(135deg, #1e3a5f, #2c5282); color: #fff; padding: 20px 24px; border-radius: 8px; margin-bottom: 24px;">
@@ -2708,7 +2698,7 @@ class Guardify_Settings {
                     <?php _e('Incomplete Orders — Abandoned Cart Capture', 'guardify'); ?>
                 </h1>
                 <p style="color: rgba(255,255,255,0.8); margin: 8px 0 0 0;">
-                    <?php _e('চেকআউট ফর্ম ফিলআপ শুরু করলেই ডেটা ক্যাপচার হয়। সাবমিট না করলে "Incomplete" স্ট্যাটাসে অর্ডার তৈরি হয়।', 'guardify'); ?>
+                    <?php _e('চেকআউট ফর্ম ফিলআপ করে সাবমিট না করলে কাস্টম টেবিলে ডেটা ক্যাপচার হয়। পরে WooCommerce অর্ডারে কনভার্ট করা যায়।', 'guardify'); ?>
                 </p>
             </div>
 
@@ -2738,14 +2728,6 @@ class Guardify_Settings {
                     </div>
                     <div style="color: #666; margin-top: 4px;"><?php _e('ডেটা সংরক্ষণ', 'guardify'); ?></div>
                 </div>
-                <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px;">
-                    <a href="<?php echo esc_url(admin_url('admin.php?page=wc-orders&status=wc-incomplete')); ?>" style="text-decoration: none;">
-                        <div style="font-size: 18px; font-weight: 700; color: #2271b1;">
-                            <?php _e('📋 সব Incomplete অর্ডার দেখুন →', 'guardify'); ?>
-                        </div>
-                    </a>
-                    <div style="color: #666; margin-top: 4px;"><?php _e('WooCommerce Orders পেজে', 'guardify'); ?></div>
-                </div>
             </div>
 
             <!-- Settings Form -->
@@ -2767,28 +2749,7 @@ class Guardify_Settings {
                                     <span class="guardify-slider"></span>
                                 </label>
                                 <p class="description">
-                                    <?php _e('চেকআউট পেজে ফর্ম ফিলআপ শুরু করলে ডেটা ক্যাপচার হবে। ব্রাউজার বন্ধ করলে বা ট্যাব সুইচ করলেও ধরা পড়বে।', 'guardify'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><?php _e('ফিল্ড ইনপুটে ক্যাপচার', 'guardify'); ?></th>
-                            <td>
-                                <label class="guardify-switch">
-                                    <input type="checkbox" name="guardify_abandoned_cart_capture_on_input" value="1" <?php checked($capture_on_input, '1'); ?>>
-                                    <span class="guardify-slider"></span>
-                                </label>
-                                <p class="description">
-                                    <?php _e('প্রতিটি ফিল্ড থেকে বের হলে (blur) ডেটা সেভ হবে। বন্ধ করলে শুধু ব্রাউজার ক্লোজ / ট্যাব সুইচে ক্যাপচার হবে।', 'guardify'); ?>
-                                </p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row"><?php _e('ডিবাউন্স টাইম (ms)', 'guardify'); ?></th>
-                            <td>
-                                <input type="number" name="guardify_abandoned_cart_debounce" value="<?php echo esc_attr($debounce); ?>" min="1000" max="30000" step="1000" class="small-text">
-                                <p class="description">
-                                    <?php _e('ফিল্ড ব্লার ইভেন্টের পর কত মিলিসেকেন্ড পর AJAX পাঠাবে। ডিফল্ট: 5000ms (5 সেকেন্ড)।', 'guardify'); ?>
+                                    <?php _e('চেকআউট পেজে ফর্ম ফিলআপ করে সাবমিট না করলে ডেটা ক্যাপচার হবে। ব্রাউজার বন্ধ করলে বা ট্যাব সুইচ করলেও ধরা পড়বে।', 'guardify'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -2798,6 +2759,27 @@ class Guardify_Settings {
                                 <input type="number" name="guardify_abandoned_cart_retention_days" value="<?php echo esc_attr($retention_days); ?>" min="0" max="365" class="small-text">
                                 <p class="description">
                                     <?php _e('এই দিনের বেশি পুরানো Incomplete অর্ডার অটো-ডিলিট হবে। 0 = কখনো ডিলিট হবে না।', 'guardify'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php _e('কুলডাউন সক্রিয়', 'guardify'); ?></th>
+                            <td>
+                                <label class="guardify-switch">
+                                    <input type="checkbox" name="guardify_incomplete_cooldown_enabled" value="1" <?php checked($cooldown_enabled, '1'); ?>>
+                                    <span class="guardify-slider"></span>
+                                </label>
+                                <p class="description">
+                                    <?php _e('একই ফোন নম্বর থেকে নির্দিষ্ট সময়ের মধ্যে বারবার Incomplete অর্ডার তৈরি হওয়া ব্লক করবে।', 'guardify'); ?>
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row"><?php _e('কুলডাউন সময় (মিনিট)', 'guardify'); ?></th>
+                            <td>
+                                <input type="number" name="guardify_incomplete_cooldown_minutes" value="<?php echo esc_attr($cooldown_minutes); ?>" min="1" max="1440" class="small-text">
+                                <p class="description">
+                                    <?php _e('একই ফোন নম্বর থেকে পুনরায় ক্যাপচার করতে ন্যূনতম কত মিনিট অপেক্ষা করতে হবে। ডিফল্ট: 30 মিনিট।', 'guardify'); ?>
                                 </p>
                             </td>
                         </tr>
@@ -2849,11 +2831,10 @@ class Guardify_Settings {
                 </h2>
                 <ol style="line-height: 1.8; color: #444;">
                     <li><?php _e('কাস্টমার চেকআউট পেজে আসলে JavaScript লোড হয়', 'guardify'); ?></li>
-                    <li><?php _e('ফোন নাম্বার বা ইমেইল দেওয়া হলে AJAX দিয়ে "Incomplete" অর্ডার তৈরি হয়', 'guardify'); ?></li>
-                    <li><?php _e('পরবর্তী ফিল্ড ফিলআপ করলে অর্ডার আপডেট হয় (নাম, ঠিকানা ইত্যাদি)', 'guardify'); ?></li>
+                    <li><?php _e('ফোন নাম্বার দিয়ে "Place Order" ক্লিক করলে কিন্তু অর্ডার সম্পন্ন না হলে কাস্টম টেবিলে সেভ হয়', 'guardify'); ?></li>
                     <li><?php _e('ব্রাউজার বন্ধ করলে বা ট্যাব সুইচ করলে sendBeacon দিয়ে শেষ ডেটা পাঠানো হয়', 'guardify'); ?></li>
-                    <li><?php _e('যদি কাস্টমার অর্ডার সম্পন্ন করে, তাহলে Incomplete অর্ডার অটো-ট্র্যাশ হয়', 'guardify'); ?></li>
-                    <li><?php _e('Incomplete অর্ডার WooCommerce Orders পেজে দেখা যায়, ফিল্টার করা যায়', 'guardify'); ?></li>
+                    <li><?php _e('যদি কাস্টমার অর্ডার সম্পন্ন করে, তাহলে Incomplete এন্ট্রি অটো-ডিলিট হয়', 'guardify'); ?></li>
+                    <li><?php _e('এই পেজ থেকে Incomplete অর্ডার দেখা, ডিলিট, কনভার্ট বা CSV এক্সপোর্ট করা যায়', 'guardify'); ?></li>
                 </ol>
                 <div style="background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 12px; margin-top: 12px;">
                     <strong>⚡ LiteSpeed + Redis নোট:</strong>
@@ -2864,55 +2845,163 @@ class Guardify_Settings {
             </div>
 
             <!-- Recent Incomplete Orders -->
-            <?php if (!empty($recent_incomplete)): ?>
-            <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px;">
-                <h2 style="margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px;">
-                    📋 <?php _e('সাম্প্রতিক Incomplete অর্ডার', 'guardify'); ?>
-                </h2>
+            <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 16px;">
+                    <h2 style="margin: 0;">
+                        📋 <?php _e('সাম্প্রতিক Incomplete অর্ডার', 'guardify'); ?>
+                        <span style="font-size: 14px; font-weight: 400; color: #666; margin-left: 8px;">(<?php echo esc_html($incomplete_count); ?>টি)</span>
+                    </h2>
+                    <div>
+                        <button type="button" id="guardify-export-csv" class="button" style="margin-right: 8px;">
+                            📥 <?php _e('CSV এক্সপোর্ট', 'guardify'); ?>
+                        </button>
+                        <button type="button" id="guardify-bulk-delete" class="button" style="color: #dc3545; border-color: #dc3545;">
+                            🗑️ <?php _e('সব ডিলিট', 'guardify'); ?>
+                        </button>
+                    </div>
+                </div>
+
+                <?php if (!empty($recent_incomplete)): ?>
                 <table class="wp-list-table widefat striped" style="border: none;">
                     <thead>
                         <tr>
-                            <th><?php _e('অর্ডার', 'guardify'); ?></th>
-                            <th><?php _e('ফোন', 'guardify'); ?></th>
+                            <th style="width: 50px;"><?php _e('ID', 'guardify'); ?></th>
                             <th><?php _e('নাম', 'guardify'); ?></th>
-                            <th><?php _e('শহর', 'guardify'); ?></th>
-                            <th><?php _e('ট্রিগার', 'guardify'); ?></th>
-                            <th><?php _e('তারিখ', 'guardify'); ?></th>
-                            <th><?php _e('সোর্স', 'guardify'); ?></th>
+                            <th><?php _e('ফোন', 'guardify'); ?></th>
+                            <th><?php _e('পণ্য', 'guardify'); ?></th>
+                            <th style="width: 100px;"><?php _e('মোট', 'guardify'); ?></th>
+                            <th style="width: 120px;"><?php _e('সময়', 'guardify'); ?></th>
+                            <th style="width: 160px;"><?php _e('অ্যাকশন', 'guardify'); ?></th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($recent_incomplete as $order): ?>
+                        <?php foreach ($recent_incomplete as $row): ?>
                             <?php
-                            $order_id = $order->get_id();
-                            $phone    = $order->get_billing_phone();
-                            $name     = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
-                            $city     = $order->get_billing_city();
-                            $trigger  = $order->get_meta('_guardify_capture_trigger') ?: '—';
-                            $date     = $order->get_date_created() ? $order->get_date_created()->date('Y-m-d H:i') : '—';
-                            $has_cartflows = $order->get_meta('_wcf_checkout_id') ? true : false;
-                            $edit_url = $order->get_edit_order_url();
+                            $name = trim(($row->billing_first_name ?? '') . ' ' . ($row->billing_last_name ?? ''));
+                            $phone = $row->billing_phone ?? '—';
+                            $product_names = [];
+                            if (!empty($row->products)) {
+                                foreach ($row->products as $p) {
+                                    $qty_str = ($p['quantity'] > 1) ? ' ×' . $p['quantity'] : '';
+                                    $product_names[] = esc_html($p['name'] . $qty_str);
+                                }
+                            }
+                            $products_display = !empty($product_names) ? implode(', ', $product_names) : '—';
+                            $total_display = number_format($row->total, 0) . ' ৳';
+                            $time_ago = $row->time_ago ?? '—';
                             ?>
-                            <tr>
-                                <td><a href="<?php echo esc_url($edit_url); ?>" style="font-weight: 600;">#<?php echo esc_html($order_id); ?></a></td>
-                                <td><code><?php echo esc_html($phone ?: '—'); ?></code></td>
+                            <tr data-id="<?php echo esc_attr($row->id); ?>">
+                                <td><strong>#<?php echo esc_html($row->id); ?></strong></td>
                                 <td><?php echo esc_html($name ?: '—'); ?></td>
-                                <td><?php echo esc_html($city ?: '—'); ?></td>
-                                <td><span style="font-size: 12px; background: #e8f4fd; padding: 2px 6px; border-radius: 3px;"><?php echo esc_html($trigger); ?></span></td>
-                                <td style="font-size: 13px; color: #666;"><?php echo esc_html($date); ?></td>
-                                <td><?php echo $has_cartflows ? '<span style="color: #6366f1;">CartFlows</span>' : '<span style="color: #059669;">WooCommerce</span>'; ?></td>
+                                <td><code><?php echo esc_html($phone); ?></code></td>
+                                <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="<?php echo esc_attr($products_display); ?>">
+                                    <?php echo $products_display; ?>
+                                </td>
+                                <td><?php echo esc_html($total_display); ?></td>
+                                <td style="font-size: 13px; color: #666;"><?php echo esc_html($time_ago); ?></td>
+                                <td>
+                                    <button type="button" class="button button-small guardify-convert-btn" data-id="<?php echo esc_attr($row->id); ?>" title="WooCommerce অর্ডারে কনভার্ট">
+                                        🔄 <?php _e('কনভার্ট', 'guardify'); ?>
+                                    </button>
+                                    <button type="button" class="button button-small guardify-delete-btn" data-id="<?php echo esc_attr($row->id); ?>" style="color: #dc3545;" title="ডিলিট">
+                                        🗑️
+                                    </button>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
-                <p style="margin-top: 12px;">
-                    <a href="<?php echo esc_url(admin_url('admin.php?page=wc-orders&status=wc-incomplete')); ?>" class="button">
-                        <?php _e('সব Incomplete অর্ডার দেখুন →', 'guardify'); ?>
-                    </a>
-                </p>
+                <?php else: ?>
+                    <p style="color: #666; text-align: center; padding: 24px 0;">
+                        <?php _e('কোনো Incomplete অর্ডার নেই। 🎉', 'guardify'); ?>
+                    </p>
+                <?php endif; ?>
             </div>
-            <?php endif; ?>
         </div>
+
+        <script>
+        jQuery(function($) {
+            var nonce = '<?php echo esc_js($nonce); ?>';
+            var ajaxurl = '<?php echo esc_js(admin_url('admin-ajax.php')); ?>';
+
+            // Delete single
+            $(document).on('click', '.guardify-delete-btn', function() {
+                var btn = $(this);
+                var id = btn.data('id');
+                if (!confirm('এই Incomplete অর্ডার ডিলিট করবেন?')) return;
+                btn.prop('disabled', true);
+                $.post(ajaxurl, { action: 'guardify_delete_incomplete', id: id, nonce: nonce }, function(res) {
+                    if (res.success) {
+                        btn.closest('tr').fadeOut(300, function() { $(this).remove(); });
+                    } else {
+                        alert('Error: ' + (res.data || 'Delete failed'));
+                        btn.prop('disabled', false);
+                    }
+                }).fail(function() { alert('AJAX Error'); btn.prop('disabled', false); });
+            });
+
+            // Bulk delete
+            $('#guardify-bulk-delete').on('click', function() {
+                if (!confirm('সব Incomplete অর্ডার ডিলিট করবেন? এই অ্যাকশন undo করা যাবে না!')) return;
+                var btn = $(this);
+                btn.prop('disabled', true).text('⏳ Deleting...');
+                var ids = [];
+                $('tr[data-id]').each(function() { ids.push($(this).data('id')); });
+                var deleted = 0;
+                function deleteNext() {
+                    if (ids.length === 0) {
+                        location.reload();
+                        return;
+                    }
+                    var id = ids.shift();
+                    $.post(ajaxurl, { action: 'guardify_delete_incomplete', id: id, nonce: nonce }, function() {
+                        deleted++;
+                        btn.text('⏳ ' + deleted + ' deleted...');
+                        deleteNext();
+                    }).fail(function() { deleteNext(); });
+                }
+                deleteNext();
+            });
+
+            // Convert to WC order
+            $(document).on('click', '.guardify-convert-btn', function() {
+                var btn = $(this);
+                var id = btn.data('id');
+                if (!confirm('এই Incomplete এন্ট্রি WooCommerce অর্ডারে কনভার্ট করবেন?')) return;
+                btn.prop('disabled', true).text('⏳...');
+                $.post(ajaxurl, { action: 'guardify_convert_to_order', id: id, nonce: nonce }, function(res) {
+                    if (res.success) {
+                        var order_id = res.data.order_id || '';
+                        btn.closest('tr').css('background', '#f0fdf4');
+                        btn.replaceWith('<a href="' + res.data.edit_url + '" class="button button-small" style="color:#22c55e;">✅ #' + order_id + '</a>');
+                    } else {
+                        alert('Error: ' + (res.data || 'Conversion failed'));
+                        btn.prop('disabled', false).text('🔄 কনভার্ট');
+                    }
+                }).fail(function() { alert('AJAX Error'); btn.prop('disabled', false).text('🔄 কনভার্ট'); });
+            });
+
+            // Export CSV
+            $('#guardify-export-csv').on('click', function() {
+                var btn = $(this);
+                btn.prop('disabled', true).text('⏳ Exporting...');
+                $.post(ajaxurl, { action: 'guardify_export_incomplete', nonce: nonce }, function(res) {
+                    if (res.success && res.data.url) {
+                        window.location.href = res.data.url;
+                    } else if (res.success && res.data.csv) {
+                        var blob = new Blob([res.data.csv], { type: 'text/csv;charset=utf-8;' });
+                        var link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        link.download = 'guardify-incomplete-orders.csv';
+                        link.click();
+                    } else {
+                        alert('Export failed: ' + (res.data || 'Unknown error'));
+                    }
+                    btn.prop('disabled', false).text('📥 CSV এক্সপোর্ট');
+                }).fail(function() { alert('AJAX Error'); btn.prop('disabled', false).text('📥 CSV এক্সপোর্ট'); });
+            });
+        });
+        </script>
         <?php
     }
 
@@ -2929,8 +3018,7 @@ class Guardify_Settings {
         if (!is_array($events)) $events = [];
 
         $all_events = [
-            'incomplete'  => ['label' => 'Incomplete Order Created', 'desc' => 'When a visitor starts checkout (browser data captured)'],
-            'identified'  => ['label' => 'Customer Identified', 'desc' => 'When phone/email is filled on incomplete order'],
+            'incomplete'  => ['label' => 'Incomplete Order Captured', 'desc' => 'When a customer fills checkout form but does not complete the order'],
             'new_order'   => ['label' => 'New Order Placed', 'desc' => 'When a real WooCommerce order is created'],
             'processing'  => ['label' => 'Order Processing', 'desc' => 'When order moves to processing status'],
             'completed'   => ['label' => 'Order Completed', 'desc' => 'When order is marked complete'],
