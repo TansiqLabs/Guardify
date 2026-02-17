@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.2 — Discord: Single Message, Taka Fix & Full Details
+
+### Fixed
+- **Taka Symbol Encoding:** `&#2547;&nbsp;` no longer appears in Discord messages. All prices now show as "Taka 1,200" instead of broken HTML entities.
+- **Duplicate Messages Eliminated:** New order + immediate processing status change no longer sends 2 separate messages. The processing transition is silently skipped when `new_order` notification was already sent.
+
+### Changed
+- **Single Message Per Event:** All order information (customer info, cart items, browser/device data, UTM, fraud report, repeat customer history) is now consolidated into ONE Discord embed per event. Previously sent as 3-5 separate embeds across the message.
+- **Full Details on Every Notification:** Removed "compact" mode — every status change (completed, cancelled, refunded, etc.) now includes the complete order details (name, address, email, products, price, size, etc.), not just a brief status update.
+- **Removed Avatar Option:** Bot avatar URL setting removed from Discord settings page. Discord's default webhook avatar is used.
+
+### Technical
+- Rewritten: `includes/class-guardify-discord.php` — Complete consolidation into single-embed architecture
+- Updated: `includes/class-guardify-settings.php` — Removed avatar field from Discord settings
+- Added: `format_price()` helper — Decodes HTML entities and replaces ৳ with "Taka"
+- Version: 1.2.1 → 1.2.2
+
 ## v1.2.1 — Patch: Discord admin settings & webhook fixes
 
 ### Fixed / Improved

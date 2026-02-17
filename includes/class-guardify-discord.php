@@ -9,18 +9,17 @@
  *  4. Order status changes (processing, completed, on-hold, cancelled, refunded, failed)
  *  5. Fraud blocks (auto-failed high-score orders)
  *
- * Includes:
- *  - All filled form fields (billing, shipping, custom fields like size/color)
- *  - Browser metadata (device, screen, language, referrer, UTM params)
- *  - Cart items, totals, coupons, payment method
- *  - Fraud report (score, risk, signals, courier stats) from TansiqLabs API
+ * All information is consolidated into a SINGLE Discord message per event:
+ *  - Customer info (name, phone, email, address)
+ *  - Cart items with variation details (size, color, etc.)
+ *  - Order totals, coupons, payment method, date
+ *  - Browser metadata (device, screen, language, referrer)
+ *  - UTM / campaign parameters
+ *  - Fraud report (score, risk, signals, courier stats)
  *  - Repeat customer detection and order history
- *  - Color-coded embeds per event type
- *  - Error logging with retry support
- *  - Rate-limit aware sending
  *
  * @package Guardify
- * @since 1.2.0
+ * @since 1.2.2
  */
 
 if (!defined('ABSPATH')) {
@@ -29,9 +28,6 @@ if (!defined('ABSPATH')) {
 
 class Guardify_Discord {
     private static ?self $instance = null;
-
-    /** Maximum embeds per Discord message */
-    private const MAX_EMBEDS = 10;
 
     /** Discord embed field character limit */
     private const FIELD_VALUE_LIMIT = 1024;
@@ -140,6 +136,26 @@ class Guardify_Discord {
     }
 
     // =========================================================================
+    // PRICE FORMATTING HELPER
+    // =========================================================================
+
+    /**
+     * Format a price for plain-text Discord display.
+     * Converts WooCommerce HTML price to clean text with "Taka" instead of currency symbol.
+     */
+    private function format_price($price): string {
+        $formatted = strip_tags(wc_price($price));
+        // Decode HTML entities (&#2547; -> taka symbol, &nbsp; -> space)
+        $formatted = html_entity_decode($formatted, ENT_QUOTES, 'UTF-8');
+        // Replace taka symbol with "Taka"
+        $formatted = str_replace("\u{09F3}", 'Taka', $formatted);
+        // Clean up non-breaking spaces and extra whitespace
+        $formatted = str_replace("\xC2\xA0", ' ', $formatted);
+        $formatted = preg_replace('/\s+/', ' ', $formatted);
+        return trim($formatted);
+    }
+
+    // =========================================================================
     // AJAX: TEST WEBHOOK
     // =========================================================================
 
@@ -193,9 +209,6 @@ class Guardify_Discord {
                 ],
             ]],
         ];
-
-        $avatar = get_option('guardify_discord_bot_avatar', '');
-        if ($avatar) $payload['avatar_url'] = $avatar;
 
         $response = wp_remote_post($url, [
             'timeout'   => 15,
@@ -290,7 +303,6 @@ class Guardify_Discord {
         $order->update_meta_data('_guardify_discord_new_order_sent', '1');
         $order->save();
 
-        $payment = $order->get_payment_method_title() ?: 'Unknown';
         $this->send_notification($order, [
             'event'       => 'new_order',
             'title'       => '🟢 New Order #' . $order->get_id(),
@@ -369,12 +381,12 @@ class Guardify_Discord {
             return;
         }
 
-        // Skip new_order → processing if we already sent a new_order notification
+        // ─── DEDUPLICATION: Skip processing if new_order was already sent ───
+        // When a new order is placed, on_order_created already sends a full notification.
+        // The immediate transition to processing should NOT send a second message.
         if ($new_status === 'processing' && in_array($old_status, ['checkout-draft', 'pending', 'incomplete'])) {
             if ($order->get_meta('_guardify_discord_new_order_sent') === '1') {
-                // Still send but as a brief status update, not full order details
-                $this->send_status_update($order, $old_status, $new_status);
-                return;
+                return; // Already sent full details in new_order notification — no duplicate
             }
         }
 
@@ -397,130 +409,83 @@ class Guardify_Discord {
             $desc .= "\n**Changed by:** {$changed_by}";
         }
 
+        // Always include full order details in EVERY notification
         $this->send_notification($order, [
-            'event'       => $event_key,
-            'title'       => "{$emoji} Order #{$order_id} — " . ucfirst($new_status),
-            'description' => $desc,
-            'color'       => self::STATUS_COLORS[$event_key] ?? 0x6C757D,
-            'compact'     => in_array($new_status, ['completed', 'cancelled', 'refunded']),
-            'include_fraud' => ($new_status === 'failed'),
+            'event'          => $event_key,
+            'title'          => "{$emoji} Order #{$order_id} — " . ucfirst($new_status),
+            'description'    => $desc,
+            'color'          => self::STATUS_COLORS[$event_key] ?? 0x6C757D,
+            'include_fraud'  => ($new_status === 'failed'),
+            'include_repeat' => true,
         ]);
     }
 
-    /**
-     * Send a brief status update embed (avoids duplicate full notifications)
-     */
-    private function send_status_update(\WC_Order $order, string $old_status, string $new_status): void {
-        $emoji = self::STATUS_EMOJIS[$new_status] ?? '📋';
-        $name = trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name());
-        $phone = $order->get_billing_phone();
-
-        $fields = [];
-        if ($name) $fields[] = ['name' => '👤 Customer', 'value' => $name, 'inline' => true];
-        if ($phone) $fields[] = ['name' => '📱 Phone', 'value' => $phone, 'inline' => true];
-        $fields[] = ['name' => '💰 Total', 'value' => strip_tags(wc_price($order->get_total())), 'inline' => true];
-        $fields[] = ['name' => '📋 Status', 'value' => ucfirst($old_status) . ' → **' . ucfirst($new_status) . '**', 'inline' => false];
-
-        $this->send_webhook([
-            'embeds' => [[
-                'title'     => "{$emoji} Order #{$order->get_id()} → " . ucfirst($new_status),
-                'color'     => self::STATUS_COLORS[$new_status] ?? 0x6C757D,
-                'fields'    => $fields,
-                'timestamp' => gmdate('c'),
-                'url'       => admin_url('admin.php?page=wc-orders&action=edit&id=' . $order->get_id()),
-                'footer'    => ['text' => 'Guardify v' . GUARDIFY_VERSION . ' • ' . wp_parse_url(home_url(), PHP_URL_HOST)],
-            ]],
-        ], 1, $new_status);
-    }
-
     // =========================================================================
-    // NOTIFICATION BUILDER
+    // NOTIFICATION BUILDER — SINGLE MESSAGE
     // =========================================================================
 
     /**
-     * Build and send a Discord webhook notification
+     * Build and send a single consolidated Discord webhook notification.
+     * All information (customer, cart, browser, fraud, repeat) goes into ONE message.
      */
     private function send_notification(\WC_Order $order, array $context): void {
-        $embeds = [];
-        $is_compact = !empty($context['compact']);
+        $fields = [];
 
-        // ─── MAIN EMBED (order info) ───
-        $main_embed = [
+        // ─── CUSTOMER INFO ───
+        $this->add_customer_fields($fields, $order);
+
+        // ─── CART ITEMS & TOTALS ───
+        $this->add_cart_fields($fields, $order);
+
+        // ─── COUPON INFO ───
+        $this->add_coupon_fields($fields, $order);
+
+        // ─── PAYMENT & DATE ───
+        $this->add_payment_fields($fields, $order);
+
+        // ─── CUSTOM CHECKOUT FIELDS (size, color, etc.) ───
+        $this->add_custom_fields($fields, $order);
+
+        // ─── SEPARATOR ───
+        if (!empty($fields)) {
+            $fields[] = ['name' => "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}", 'value' => '** **', 'inline' => false];
+        }
+
+        // ─── BROWSER & DEVICE INFO ───
+        $this->add_browser_fields($fields, $order, $context['capture_data'] ?? []);
+
+        // ─── UTM / CAMPAIGN ───
+        $this->add_utm_fields($fields, $order);
+
+        // ─── REPEAT CUSTOMER ───
+        if (!empty($context['include_repeat'])) {
+            $this->add_repeat_customer_fields($fields, $order);
+        }
+
+        // ─── FRAUD REPORT ───
+        if (!empty($context['include_fraud'])) {
+            $this->add_fraud_fields($fields, $order);
+        }
+
+        // Trim to 25 fields max (Discord limit per embed)
+        $fields = array_slice($fields, 0, 25);
+
+        // ─── BUILD SINGLE EMBED ───
+        $embed = [
             'title'       => $context['title'],
             'description' => mb_substr($context['description'], 0, self::DESCRIPTION_LIMIT),
             'color'       => $context['color'],
             'timestamp'   => gmdate('c'),
-            'fields'      => [],
+            'fields'      => $fields,
+            'url'         => admin_url('admin.php?page=wc-orders&action=edit&id=' . $order->get_id()),
             'footer'      => [
-                'text' => 'Guardify v' . (defined('GUARDIFY_VERSION') ? GUARDIFY_VERSION : '1.2.0') . ' • ' . wp_parse_url(home_url(), PHP_URL_HOST),
+                'text' => 'Guardify v' . (defined('GUARDIFY_VERSION') ? GUARDIFY_VERSION : '1.2.2') . ' • ' . wp_parse_url(home_url(), PHP_URL_HOST),
             ],
         ];
 
-        // Order URL (link to WooCommerce admin)
-        $order_url = admin_url('admin.php?page=wc-orders&action=edit&id=' . $order->get_id());
-        $main_embed['url'] = $order_url;
-
-        // ─── CUSTOMER INFO FIELDS ───
-        $this->add_customer_fields($main_embed['fields'], $order);
-
-        if (!$is_compact) {
-            // ─── CART ITEMS ───
-            $this->add_cart_fields($main_embed['fields'], $order);
-
-            // ─── COUPON INFO ───
-            $this->add_coupon_fields($main_embed['fields'], $order);
-
-            // ─── PAYMENT INFO ───
-            $this->add_payment_fields($main_embed['fields'], $order);
-
-            // ─── CUSTOM CHECKOUT FIELDS (size, color, etc.) ───
-            $this->add_custom_fields($main_embed['fields'], $order);
-        } else {
-            // Compact mode: just total and payment
-            $total = $order->get_total();
-            if ($total > 0) {
-                $main_embed['fields'][] = ['name' => '💰 Total', 'value' => strip_tags(wc_price($total)), 'inline' => true];
-            }
-        }
-
-        $embeds[] = $main_embed;
-
-        if (!$is_compact) {
-            // ─── REPEAT CUSTOMER EMBED ───
-            if (!empty($context['include_repeat'])) {
-                $repeat_embed = $this->build_repeat_customer_embed($order);
-                if ($repeat_embed) {
-                    $embeds[] = $repeat_embed;
-                }
-            }
-
-            // ─── BROWSER/DEVICE EMBED ───
-            $browser_embed = $this->build_browser_embed($order, $context['capture_data'] ?? []);
-            if ($browser_embed) {
-                $embeds[] = $browser_embed;
-            }
-
-            // ─── UTM / CAMPAIGN EMBED ───
-            $utm_embed = $this->build_utm_embed($order);
-            if ($utm_embed) {
-                $embeds[] = $utm_embed;
-            }
-        }
-
-        // ─── FRAUD REPORT EMBED (always if requested) ───
-        if (!empty($context['include_fraud'])) {
-            $fraud_embed = $this->build_fraud_embed($order);
-            if ($fraud_embed) {
-                $embeds[] = $fraud_embed;
-            }
-        }
-
-        // Limit embeds
-        $embeds = array_slice($embeds, 0, self::MAX_EMBEDS);
-
-        // ─── SEND ───
+        // ─── SEND SINGLE MESSAGE ───
         $this->send_webhook([
-            'embeds' => $embeds,
+            'embeds' => [$embed],
         ], 1, $context['event'] ?? '');
     }
 
@@ -538,7 +503,7 @@ class Guardify_Discord {
         $items_count = count($order->get_items());
         $parts[] = "**Items:** {$items_count}";
 
-        $total = strip_tags(wc_price($order->get_total()));
+        $total = $this->format_price($order->get_total());
         $parts[] = "**Total:** {$total}";
 
         // Coupons used
@@ -567,7 +532,7 @@ class Guardify_Discord {
     }
 
     // =========================================================================
-    // FIELD BUILDERS
+    // FIELD BUILDERS (all add to the same fields array)
     // =========================================================================
 
     /**
@@ -656,7 +621,7 @@ class Guardify_Discord {
         foreach ($items as $item) {
             $qty = $item->get_quantity();
             $name = $item->get_name();
-            $total = strip_tags(wc_price($item->get_total()));
+            $total = $this->format_price($item->get_total());
 
             // Include variation details if available
             $variation_info = '';
@@ -701,7 +666,7 @@ class Guardify_Discord {
 
         $total_lines = [];
         if ($subtotal > 0) {
-            $total_lines[] = '**Subtotal:** ' . strip_tags(wc_price($subtotal));
+            $total_lines[] = '**Subtotal:** ' . $this->format_price($subtotal);
         }
         if ($shipping_total > 0) {
             $shipping_method = '';
@@ -710,15 +675,15 @@ class Guardify_Discord {
                 $shipping_method = $s->get_method_title();
                 break;
             }
-            $total_lines[] = '**Shipping:** ' . strip_tags(wc_price($shipping_total)) . ($shipping_method ? " ({$shipping_method})" : '');
+            $total_lines[] = '**Shipping:** ' . $this->format_price($shipping_total) . ($shipping_method ? " ({$shipping_method})" : '');
         }
         if ($discount > 0) {
-            $total_lines[] = '**Discount:** -' . strip_tags(wc_price($discount));
+            $total_lines[] = '**Discount:** -' . $this->format_price($discount);
         }
         if ($tax_total > 0) {
-            $total_lines[] = '**Tax:** ' . strip_tags(wc_price($tax_total));
+            $total_lines[] = '**Tax:** ' . $this->format_price($tax_total);
         }
-        $total_lines[] = '💰 **Total:** ' . strip_tags(wc_price($total));
+        $total_lines[] = '💰 **Total:** ' . $this->format_price($total);
 
         $fields[] = ['name' => '💳 Order Totals', 'value' => implode("\n", $total_lines), 'inline' => false];
     }
@@ -735,7 +700,7 @@ class Guardify_Discord {
         $lines = [];
         foreach ($order->get_items('coupon') as $coupon_item) {
             $code = $coupon_item->get_code();
-            $discount = strip_tags(wc_price($coupon_item->get_discount()));
+            $discount = $this->format_price($coupon_item->get_discount());
             $lines[] = "🏷️ `{$code}` — -{$discount}";
         }
 
@@ -749,17 +714,17 @@ class Guardify_Discord {
      */
     private function add_payment_fields(array &$fields, \WC_Order $order): void {
         $method = $order->get_payment_method_title();
-        if (!$method) return;
+        if ($method) {
+            $payment_text = '💳 ' . $method;
+            
+            // Transaction ID if available
+            $txn_id = $order->get_transaction_id();
+            if ($txn_id) {
+                $payment_text .= "\nTxn: `{$txn_id}`";
+            }
 
-        $payment_text = '💳 ' . $method;
-        
-        // Transaction ID if available
-        $txn_id = $order->get_transaction_id();
-        if ($txn_id) {
-            $payment_text .= "\nTxn: `{$txn_id}`";
+            $fields[] = ['name' => '💳 Payment', 'value' => $payment_text, 'inline' => true];
         }
-
-        $fields[] = ['name' => '💳 Payment', 'value' => $payment_text, 'inline' => true];
 
         // Order date
         $date_created = $order->get_date_created();
@@ -792,128 +757,10 @@ class Guardify_Discord {
         }
     }
 
-    // =========================================================================
-    // EMBED BUILDERS
-    // =========================================================================
-
     /**
-     * Build repeat customer detection embed
+     * Add browser/device info fields directly into the main embed
      */
-    private function build_repeat_customer_embed(\WC_Order $order): ?array {
-        $phone = $order->get_billing_phone();
-        $email = $order->get_billing_email();
-
-        if (!$phone && !$email) {
-            return null;
-        }
-
-        // Search for previous orders by this customer
-        $args = [
-            'limit'   => 10,
-            'return'  => 'ids',
-            'exclude' => [$order->get_id()],
-            'status'  => ['processing', 'completed', 'on-hold', 'cancelled', 'refunded', 'failed'],
-            'orderby' => 'date',
-            'order'   => 'DESC',
-        ];
-
-        $previous_orders = [];
-
-        // Search by phone
-        if ($phone) {
-            $phone_orders = wc_get_orders(array_merge($args, [
-                'billing_phone' => $phone,
-            ]));
-            $previous_orders = array_merge($previous_orders, $phone_orders);
-        }
-
-        // Search by email (if different results)
-        if ($email) {
-            $email_orders = wc_get_orders(array_merge($args, [
-                'billing_email' => $email,
-            ]));
-            $previous_orders = array_merge($previous_orders, $email_orders);
-        }
-
-        // Deduplicate
-        $previous_orders = array_unique($previous_orders);
-
-        if (empty($previous_orders)) {
-            return null; // New customer, no need for embed
-        }
-
-        $count = count($previous_orders);
-        $fields = [];
-
-        $fields[] = ['name' => '🔄 Previous Orders', 'value' => "**{$count}** previous order(s) found", 'inline' => true];
-
-        // Quick summary of recent orders
-        $completed = 0;
-        $cancelled = 0;
-        $total_spent = 0;
-
-        foreach (array_slice($previous_orders, 0, 10) as $prev_id) {
-            $prev = wc_get_order($prev_id);
-            if (!$prev) continue;
-
-            $status = $prev->get_status();
-            if (in_array($status, ['completed', 'processing'])) {
-                $completed++;
-                $total_spent += (float) $prev->get_total();
-            } elseif ($status === 'cancelled') {
-                $cancelled++;
-            }
-        }
-
-        if ($completed > 0) {
-            $fields[] = ['name' => '✅ Completed', 'value' => (string) $completed, 'inline' => true];
-            $fields[] = ['name' => '💰 Total Spent', 'value' => strip_tags(wc_price($total_spent)), 'inline' => true];
-        }
-        if ($cancelled > 0) {
-            $fields[] = ['name' => '❌ Cancelled', 'value' => (string) $cancelled, 'inline' => true];
-        }
-
-        // Show last 3 orders  
-        $recent_lines = [];
-        foreach (array_slice($previous_orders, 0, 3) as $prev_id) {
-            $prev = wc_get_order($prev_id);
-            if (!$prev) continue;
-            $date = $prev->get_date_created() ? $prev->get_date_created()->date('M j, Y') : '—';
-            $status_emoji = match ($prev->get_status()) {
-                'completed' => '✅',
-                'processing' => '🔵',
-                'cancelled' => '❌',
-                'refunded' => '🟣',
-                'failed' => '⛔',
-                default => '📋',
-            };
-            $recent_lines[] = "{$status_emoji} **#{$prev_id}** — {$date} — " . strip_tags(wc_price($prev->get_total()));
-        }
-        if ($recent_lines) {
-            $fields[] = ['name' => '📜 Recent Orders', 'value' => implode("\n", $recent_lines), 'inline' => false];
-        }
-
-        // Customer reliability score
-        $total_orders = $completed + $cancelled;
-        if ($total_orders >= 2) {
-            $success_rate = round(($completed / $total_orders) * 100);
-            $reliability = $success_rate >= 80 ? '🟢 Reliable' : ($success_rate >= 50 ? '🟡 Mixed' : '🔴 Risky');
-            $fields[] = ['name' => '📊 Reliability', 'value' => "{$reliability} ({$success_rate}% success rate)", 'inline' => false];
-        }
-
-        return [
-            'title'  => '👥 Repeat Customer — ' . ($count >= 5 ? '🌟 Loyal' : ($count >= 2 ? '🔁 Returning' : '📌 Known')),
-            'color'  => $count >= 5 ? 0x28A745 : ($count >= 2 ? 0x17A2B8 : 0xFFC107),
-            'fields' => $fields,
-        ];
-    }
-
-    /**
-     * Build browser/device info embed
-     */
-    private function build_browser_embed(\WC_Order $order, array $capture_data = []): ?array {
-        $fields = [];
-
+    private function add_browser_fields(array &$fields, \WC_Order $order, array $capture_data = []): void {
         $ua       = $order->get_meta('_guardify_browser_browser_ua') ?: ($capture_data['_browser_browser_ua'] ?? '');
         $language = $order->get_meta('_guardify_browser_browser_language') ?: ($capture_data['_browser_browser_language'] ?? '');
         $platform = $order->get_meta('_guardify_browser_browser_platform') ?: ($capture_data['_browser_browser_platform'] ?? '');
@@ -929,59 +776,52 @@ class Guardify_Discord {
             if ($wc_ua) {
                 $ua = $wc_ua;
             } else {
-                return null;
+                return;
             }
         }
 
+        // Build a compact browser/device info block
+        $browser_lines = [];
+
         $device = $this->parse_device_string($ua);
         if ($device) {
-            $fields[] = ['name' => '📱 Device', 'value' => $device, 'inline' => true];
+            $browser_lines[] = "📱 **Device:** {$device}";
         }
-
         if ($platform) {
-            $fields[] = ['name' => '💻 Platform', 'value' => $platform, 'inline' => true];
+            $browser_lines[] = "💻 **Platform:** {$platform}";
         }
-
         if ($screen_w && $screen_h) {
-            $fields[] = ['name' => '🖥️ Screen', 'value' => $screen_w . ' × ' . $screen_h, 'inline' => true];
+            $browser_lines[] = "🖥️ **Screen:** {$screen_w} × {$screen_h}";
         }
-
         $device_type = ($touch === '1') ? '📱 Mobile/Tablet' : '🖥️ Desktop';
-        $fields[] = ['name' => '🔌 Type', 'value' => $device_type, 'inline' => true];
-
+        $browser_lines[] = "🔌 **Type:** {$device_type}";
         if ($language) {
-            $fields[] = ['name' => '🌍 Language', 'value' => $language, 'inline' => true];
+            $browser_lines[] = "🌍 **Language:** {$language}";
         }
-
         if ($timezone) {
-            $fields[] = ['name' => '🕐 Timezone', 'value' => $timezone, 'inline' => true];
+            $browser_lines[] = "🕐 **Timezone:** {$timezone}";
         }
-
         if ($conn) {
-            $fields[] = ['name' => '📶 Connection', 'value' => $conn, 'inline' => true];
+            $browser_lines[] = "📶 **Connection:** {$conn}";
         }
-
         if ($referrer) {
             $ref_domain = wp_parse_url($referrer, PHP_URL_HOST) ?: $referrer;
-            $fields[] = ['name' => '🔗 Referrer', 'value' => "[{$ref_domain}]({$referrer})", 'inline' => true];
+            $browser_lines[] = "🔗 **Referrer:** [{$ref_domain}]({$referrer})";
         }
 
-        if (empty($fields)) {
-            return null;
+        if (!empty($browser_lines)) {
+            $text = implode("\n", $browser_lines);
+            if (mb_strlen($text) > self::FIELD_VALUE_LIMIT) {
+                $text = mb_substr($text, 0, self::FIELD_VALUE_LIMIT - 20) . "\n...";
+            }
+            $fields[] = ['name' => '🖥️ Browser & Device Info', 'value' => $text, 'inline' => false];
         }
-
-        return [
-            'title'  => '🖥️ Browser & Device Info',
-            'color'  => 0x17A2B8,
-            'fields' => $fields,
-        ];
     }
 
     /**
-     * Build UTM / campaign parameters embed
+     * Add UTM / campaign parameter fields directly into the main embed
      */
-    private function build_utm_embed(\WC_Order $order): ?array {
-        $params = [];
+    private function add_utm_fields(array &$fields, \WC_Order $order): void {
         $utm_keys = [
             'utm_source'   => 'Source',
             'utm_medium'   => 'Medium',
@@ -993,37 +833,133 @@ class Guardify_Discord {
             'ttclid'       => 'TikTok Click',
         ];
 
+        $utm_lines = [];
         foreach ($utm_keys as $key => $label) {
             $value = $order->get_meta('_guardify_param_' . $key);
             if ($value) {
-                $params[] = ['name' => '📊 ' . $label, 'value' => $value, 'inline' => true];
+                $utm_lines[] = "📊 **{$label}:** {$value}";
             }
         }
 
         // Landing page
         $landing = $order->get_meta('_guardify_param_landing_page');
         if ($landing) {
-            $params[] = ['name' => '🔗 Landing Page', 'value' => $landing, 'inline' => false];
+            $utm_lines[] = "🔗 **Landing Page:** {$landing}";
         }
 
-        if (empty($params)) {
-            return null;
+        if (!empty($utm_lines)) {
+            $text = implode("\n", $utm_lines);
+            if (mb_strlen($text) > self::FIELD_VALUE_LIMIT) {
+                $text = mb_substr($text, 0, self::FIELD_VALUE_LIMIT - 20) . "\n...";
+            }
+            $fields[] = ['name' => '📈 Campaign / UTM Data', 'value' => $text, 'inline' => false];
         }
-
-        return [
-            'title'  => '📈 Campaign / UTM Data',
-            'color'  => 0x6F42C1,
-            'fields' => $params,
-        ];
     }
 
     /**
-     * Build fraud report embed from stored fraud data
+     * Add repeat customer info fields directly into the main embed
      */
-    private function build_fraud_embed(\WC_Order $order): ?array {
+    private function add_repeat_customer_fields(array &$fields, \WC_Order $order): void {
+        $phone = $order->get_billing_phone();
+        $email = $order->get_billing_email();
+
+        if (!$phone && !$email) {
+            return;
+        }
+
+        // Search for previous orders by this customer
+        $args = [
+            'limit'   => 10,
+            'return'  => 'ids',
+            'exclude' => [$order->get_id()],
+            'status'  => ['processing', 'completed', 'on-hold', 'cancelled', 'refunded', 'failed'],
+            'orderby' => 'date',
+            'order'   => 'DESC',
+        ];
+
+        $previous_orders = [];
+
+        if ($phone) {
+            $phone_orders = wc_get_orders(array_merge($args, ['billing_phone' => $phone]));
+            $previous_orders = array_merge($previous_orders, $phone_orders);
+        }
+        if ($email) {
+            $email_orders = wc_get_orders(array_merge($args, ['billing_email' => $email]));
+            $previous_orders = array_merge($previous_orders, $email_orders);
+        }
+
+        $previous_orders = array_unique($previous_orders);
+
+        if (empty($previous_orders)) {
+            return; // New customer
+        }
+
+        $count = count($previous_orders);
+        $completed = 0;
+        $cancelled = 0;
+        $total_spent = 0;
+
+        foreach (array_slice($previous_orders, 0, 10) as $prev_id) {
+            $prev = wc_get_order($prev_id);
+            if (!$prev) continue;
+            $status = $prev->get_status();
+            if (in_array($status, ['completed', 'processing'])) {
+                $completed++;
+                $total_spent += (float) $prev->get_total();
+            } elseif ($status === 'cancelled') {
+                $cancelled++;
+            }
+        }
+
+        $repeat_lines = [];
+        $label = $count >= 5 ? '🌟 Loyal' : ($count >= 2 ? '🔁 Returning' : '📌 Known');
+        $repeat_lines[] = "**{$label}** — **{$count}** previous order(s)";
+
+        if ($completed > 0) {
+            $repeat_lines[] = "✅ Completed: **{$completed}** • 💰 Total Spent: **" . $this->format_price($total_spent) . "**";
+        }
+        if ($cancelled > 0) {
+            $repeat_lines[] = "❌ Cancelled: **{$cancelled}**";
+        }
+
+        // Last 3 orders
+        foreach (array_slice($previous_orders, 0, 3) as $prev_id) {
+            $prev = wc_get_order($prev_id);
+            if (!$prev) continue;
+            $date = $prev->get_date_created() ? $prev->get_date_created()->date('M j, Y') : '—';
+            $status_emoji = match ($prev->get_status()) {
+                'completed' => '✅',
+                'processing' => '🔵',
+                'cancelled' => '❌',
+                'refunded' => '🟣',
+                'failed' => '⛔',
+                default => '📋',
+            };
+            $repeat_lines[] = "{$status_emoji} **#{$prev_id}** — {$date} — " . $this->format_price($prev->get_total());
+        }
+
+        // Reliability
+        $total_orders = $completed + $cancelled;
+        if ($total_orders >= 2) {
+            $success_rate = round(($completed / $total_orders) * 100);
+            $reliability = $success_rate >= 80 ? '🟢 Reliable' : ($success_rate >= 50 ? '🟡 Mixed' : '🔴 Risky');
+            $repeat_lines[] = "📊 **Reliability:** {$reliability} ({$success_rate}% success)";
+        }
+
+        $text = implode("\n", $repeat_lines);
+        if (mb_strlen($text) > self::FIELD_VALUE_LIMIT) {
+            $text = mb_substr($text, 0, self::FIELD_VALUE_LIMIT - 20) . "\n...";
+        }
+        $fields[] = ['name' => '👥 Repeat Customer', 'value' => $text, 'inline' => false];
+    }
+
+    /**
+     * Add fraud report fields directly into the main embed
+     */
+    private function add_fraud_fields(array &$fields, \WC_Order $order): void {
         $phone = $order->get_billing_phone();
         if (empty($phone)) {
-            return null;
+            return;
         }
 
         $score = $order->get_meta('_guardify_fraud_score');
@@ -1041,31 +977,22 @@ class Guardify_Discord {
                 if ($result) {
                     $score = intval($result['score'] ?? 0);
                     $risk  = $result['risk'] ?? 'unknown';
-                    
                     $order->update_meta_data('_guardify_fraud_score', $score);
                     $order->update_meta_data('_guardify_fraud_risk', $risk);
                     $order->update_meta_data('_guardify_fraud_checked_at', current_time('mysql'));
                     $order->save();
                 } else {
-                    return null;
+                    return;
                 }
             }
         }
 
         if ($score === '') {
-            return null;
+            return;
         }
 
         $score = intval($score);
         $risk = $risk ?: 'unknown';
-
-        $risk_colors = [
-            'low'      => 0x28A745,
-            'medium'   => 0xFFC107,
-            'high'     => 0xFD7E14,
-            'critical' => 0xDC3545,
-        ];
-        $embed_color = $risk_colors[$risk] ?? 0x6C757D;
 
         $risk_emoji = match ($risk) {
             'low'      => '🟢',
@@ -1080,18 +1007,18 @@ class Guardify_Discord {
         $bar_empty = 10 - $bar_filled;
         $score_bar = str_repeat('🟥', $bar_filled) . str_repeat('⬜', $bar_empty);
 
-        $fields = [];
-        $fields[] = ['name' => '🎯 Fraud Score', 'value' => "**{$score}/100**\n{$score_bar}", 'inline' => true];
-        $fields[] = ['name' => '⚠️ Risk Level', 'value' => $risk_emoji . ' **' . ucfirst($risk) . '**', 'inline' => true];
+        $fraud_lines = [];
+        $fraud_lines[] = "🎯 **Score:** {$score}/100 {$score_bar}";
+        $fraud_lines[] = "⚠️ **Risk:** {$risk_emoji} **" . ucfirst($risk) . "**";
 
-        // Signals
+        // Signals & courier from cache
         $cache_key = 'guardify_fraud_' . md5($phone);
         $cached = get_transient($cache_key);
         if ($cached && is_array($cached)) {
             $signals = $cached['signals'] ?? [];
             if (!empty($signals)) {
-                $signal_lines = [];
-                foreach (array_slice($signals, 0, 6) as $sig) {
+                $signal_parts = [];
+                foreach (array_slice($signals, 0, 4) as $sig) {
                     $severity_icon = match ($sig['severity'] ?? 'info') {
                         'critical' => '🔴',
                         'high'     => '🟠',
@@ -1099,49 +1026,48 @@ class Guardify_Discord {
                         'low'      => '🟢',
                         default    => 'ℹ️',
                     };
-                    $signal_lines[] = $severity_icon . ' **' . ($sig['label'] ?? '') . ':** ' . ($sig['detail'] ?? '');
+                    $signal_parts[] = $severity_icon . ' **' . ($sig['label'] ?? '') . ':** ' . ($sig['detail'] ?? '');
                 }
-                $fields[] = ['name' => '🔍 Risk Signals', 'value' => implode("\n", $signal_lines), 'inline' => false];
+                $fraud_lines[] = implode("\n", $signal_parts);
             }
 
             // Summary verdict
             $summary = $cached['summary'] ?? [];
+            if (!empty($summary['verdict'])) {
+                $fraud_lines[] = "📋 **Verdict:** " . $summary['verdict'];
+            }
             if (!empty($summary)) {
-                $verdict = $summary['verdict'] ?? '';
-                if ($verdict) {
-                    $fields[] = ['name' => '📋 Verdict', 'value' => $verdict, 'inline' => false];
-                }
                 $stats = [];
-                if (isset($summary['totalEvents'])) $stats[] = '📊 Events: **' . $summary['totalEvents'] . '**';
-                if (isset($summary['blockedEvents'])) $stats[] = '🚫 Blocked: **' . $summary['blockedEvents'] . '**';
-                if (isset($summary['uniqueSites'])) $stats[] = '🌐 Sites: **' . $summary['uniqueSites'] . '**';
+                if (isset($summary['totalEvents'])) $stats[] = 'Events: **' . $summary['totalEvents'] . '**';
+                if (isset($summary['blockedEvents'])) $stats[] = 'Blocked: **' . $summary['blockedEvents'] . '**';
+                if (isset($summary['uniqueSites'])) $stats[] = 'Sites: **' . $summary['uniqueSites'] . '**';
                 if ($stats) {
-                    $fields[] = ['name' => '📊 Network Stats', 'value' => implode(' • ', $stats), 'inline' => false];
+                    $fraud_lines[] = '📊 ' . implode(' • ', $stats);
                 }
             }
 
-            // Courier delivery stats
+            // Courier delivery stats (important for delivery report)
             $courier = $cached['courier'] ?? [];
             if (!empty($courier) && isset($courier['totalParcels']) && $courier['totalParcels'] > 0) {
-                $courier_lines = [];
-                $courier_lines[] = '📦 Total Parcels: **' . $courier['totalParcels'] . '**';
-                $courier_lines[] = '✅ Delivered: **' . ($courier['totalDelivered'] ?? 0) . '**';
-                $courier_lines[] = '❌ Cancelled: **' . ($courier['totalCancelled'] ?? 0) . '**';
+                $courier_parts = [];
+                $courier_parts[] = '📦 Parcels: **' . $courier['totalParcels'] . '**';
+                $courier_parts[] = '✅ Delivered: **' . ($courier['totalDelivered'] ?? 0) . '**';
+                $courier_parts[] = '❌ Cancelled: **' . ($courier['totalCancelled'] ?? 0) . '**';
                 if (isset($courier['successRate'])) {
-                    $courier_lines[] = '📈 Success Rate: **' . $courier['successRate'] . '%**';
+                    $courier_parts[] = '📈 Success: **' . $courier['successRate'] . '%**';
                 }
                 if (isset($courier['cancellationRate'])) {
-                    $courier_lines[] = '📉 Cancel Rate: **' . $courier['cancellationRate'] . '%**';
+                    $courier_parts[] = '📉 Cancel: **' . $courier['cancellationRate'] . '%**';
                 }
-                $fields[] = ['name' => '🚚 Courier History', 'value' => implode("\n", $courier_lines), 'inline' => false];
+                $fraud_lines[] = '🚚 ' . implode(' • ', $courier_parts);
             }
         }
 
-        return [
-            'title'  => '🛡️ Fraud Report — ' . $phone,
-            'color'  => $embed_color,
-            'fields' => $fields,
-        ];
+        $text = implode("\n", $fraud_lines);
+        if (mb_strlen($text) > self::FIELD_VALUE_LIMIT) {
+            $text = mb_substr($text, 0, self::FIELD_VALUE_LIMIT - 20) . "\n...";
+        }
+        $fields[] = ['name' => '🛡️ Fraud Report — ' . $phone, 'value' => $text, 'inline' => false];
     }
 
     // =========================================================================
@@ -1158,12 +1084,8 @@ class Guardify_Discord {
             return false;
         }
 
-        // Add username and avatar
+        // Add bot username only (no avatar option)
         $payload['username'] = get_option('guardify_discord_bot_name', 'Guardify');
-        $avatar = get_option('guardify_discord_bot_avatar', '');
-        if ($avatar) {
-            $payload['avatar_url'] = $avatar;
-        }
 
         $json_body = wp_json_encode($payload);
         if (!$json_body) {
@@ -1171,20 +1093,18 @@ class Guardify_Discord {
             return false;
         }
 
-        // Use blocking request to ensure delivery (critical fix)
+        // Use blocking request to ensure delivery
         $response = wp_remote_post($webhook_url, [
             'timeout'     => 15,
             'headers'     => ['Content-Type' => 'application/json'],
             'body'        => $json_body,
-            'blocking'    => true, // MUST be true to ensure message is actually sent
+            'blocking'    => true,
             'sslverify'   => true,
             'data_format' => 'body',
         ]);
 
         if (is_wp_error($response)) {
             error_log('Guardify Discord Error (attempt ' . $attempt . '): ' . $response->get_error_message());
-            
-            // Schedule retry
             if ($attempt < self::MAX_RETRIES) {
                 $this->schedule_retry($payload, $attempt + 1, 5, $event_type);
             }
@@ -1193,26 +1113,21 @@ class Guardify_Discord {
 
         $code = wp_remote_retrieve_response_code($response);
 
-        // Success
         if ($code >= 200 && $code < 300) {
             return true;
         }
 
-        // Rate limited
         if ($code === 429) {
             $body = json_decode(wp_remote_retrieve_body($response), true);
             $retry_after = isset($body['retry_after']) ? (float) $body['retry_after'] : 2;
             $retry_after_seconds = max(1, (int) ceil($retry_after));
-            
             error_log("Guardify Discord: Rate limited. Retry after {$retry_after}s (attempt {$attempt}).");
-            
             if ($attempt < self::MAX_RETRIES) {
                 $this->schedule_retry($payload, $attempt + 1, $retry_after_seconds, $event_type);
             }
             return false;
         }
 
-        // Other errors
         $body = wp_remote_retrieve_body($response);
         error_log("Guardify Discord Error (HTTP {$code}, attempt {$attempt}): " . mb_substr($body, 0, 300));
 
@@ -1302,14 +1217,14 @@ class Guardify_Discord {
             $browser = 'Edge ' . $m[1];
         } elseif (preg_match('/OPR\/(\d+)/', $ua, $m)) {
             $browser = 'Opera ' . $m[1];
-        } elseif (preg_match('/Chrome\/(\d+)/', $ua, $m)) {
-            $browser = 'Chrome ' . $m[1];
-        } elseif (preg_match('/Safari\/(\d+)/', $ua) && preg_match('/Version\/(\d+)/', $ua, $m)) {
-            $browser = 'Safari ' . $m[1];
         } elseif (preg_match('/SamsungBrowser\/(\d+)/', $ua, $m)) {
             $browser = 'Samsung Browser ' . $m[1];
         } elseif (preg_match('/UCBrowser\/(\d+)/', $ua, $m)) {
             $browser = 'UC Browser ' . $m[1];
+        } elseif (preg_match('/Chrome\/(\d+)/', $ua, $m)) {
+            $browser = 'Chrome ' . $m[1];
+        } elseif (preg_match('/Safari\/(\d+)/', $ua) && preg_match('/Version\/(\d+)/', $ua, $m)) {
+            $browser = 'Safari ' . $m[1];
         }
 
         // Detect OS

@@ -315,9 +315,6 @@ class Guardify_Settings {
             if (isset($_POST['guardify_discord_bot_name'])) {
                 update_option('guardify_discord_bot_name', sanitize_text_field($_POST['guardify_discord_bot_name']));
             }
-            if (isset($_POST['guardify_discord_bot_avatar'])) {
-                update_option('guardify_discord_bot_avatar', esc_url_raw($_POST['guardify_discord_bot_avatar']));
-            }
             // Per-event webhook URLs (optional overrides)
             $per_event_urls = [];
             $event_keys = ['incomplete', 'identified', 'new_order', 'processing', 'completed', 'on-hold', 'cancelled', 'refunded', 'failed', 'fraud_block'];
@@ -2926,7 +2923,6 @@ class Guardify_Settings {
         $enabled      = get_option('guardify_discord_enabled', '0');
         $webhook_url  = get_option('guardify_discord_webhook_url', '');
         $bot_name     = get_option('guardify_discord_bot_name', 'Guardify');
-        $bot_avatar   = get_option('guardify_discord_bot_avatar', '');
         $per_event    = get_option('guardify_discord_webhook_urls', []);
         if (!is_array($per_event)) $per_event = [];
         $events       = get_option('guardify_discord_events', ['incomplete', 'identified', 'new_order', 'processing', 'completed', 'cancelled', 'on-hold', 'refunded', 'failed', 'fraud_block']);
@@ -3013,13 +3009,7 @@ class Guardify_Settings {
                                     <p class="description"><?php _e('Display name for the webhook bot in Discord.', 'guardify'); ?></p>
                                 </td>
                             </tr>
-                            <tr>
-                                <th scope="row"><?php _e('Bot Avatar URL', 'guardify'); ?></th>
-                                <td>
-                                    <input type="url" name="guardify_discord_bot_avatar" value="<?php echo esc_attr($bot_avatar); ?>" class="regular-text" style="width: 100%; max-width: 600px;" placeholder="https://example.com/avatar.png">
-                                    <p class="description"><?php _e('Optional avatar image URL for the bot. Leave empty for default.', 'guardify'); ?></p>
-                                </td>
-                            </tr>
+
                         </table>
                     </div>
                 </div>
