@@ -100,15 +100,17 @@ class Guardify_SteadFast {
      * Enqueue admin scripts
      */
     public function enqueue_admin_scripts($hook): void {
-        // Only on order pages and Guardify settings
-        $allowed_hooks = array(
-            'edit.php',
+        // Only on WooCommerce order pages and Guardify settings
+        $screen = get_current_screen();
+        if (!$screen) return;
+
+        $is_allowed = in_array($screen->id, [
+            'edit-shop_order',
+            'shop_order',
             'woocommerce_page_wc-orders',
-            'toplevel_page_guardify-settings',
-            'guardify_page_guardify-steadfast'
-        );
-        
-        if (!in_array($hook, $allowed_hooks) && strpos($hook, 'guardify') === false) {
+        ], true) || strpos($screen->id, 'guardify') !== false;
+
+        if (!$is_allowed) {
             return;
         }
 

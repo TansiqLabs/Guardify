@@ -46,9 +46,8 @@ class Guardify_Order_Completed_By {
             // Also add to preview end for better compatibility
             add_action('woocommerce_admin_order_preview_end', array($this, 'add_to_order_preview_end'), 10);
             
-            // Add styles
+            // Add styles (enqueue CSS file; inline styles are included in the file itself)
             add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_styles'));
-            add_action('admin_head', array($this, 'add_inline_styles'));
         }
     }
 

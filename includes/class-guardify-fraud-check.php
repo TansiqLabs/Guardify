@@ -694,12 +694,15 @@ class Guardify_Fraud_Check {
     // ── Assets ────────────────────────────────────────────────────────────
 
     public function enqueue_assets(string $hook): void {
-        // Load on order list + individual order screens
-        $order_screens = ['edit.php', 'post.php', 'post-new.php', 'woocommerce_page_wc-orders'];
-        $page = $_GET['page'] ?? '';
-
-        $is_order_screen = in_array($hook, $order_screens, true)
-            || $page === 'wc-orders';
+        // Load only on WooCommerce order screens (list + single order)
+        $screen = get_current_screen();
+        if (!$screen) return;
+        
+        $is_order_screen = in_array($screen->id, [
+            'edit-shop_order',
+            'shop_order',
+            'woocommerce_page_wc-orders',
+        ], true);
 
         if (!$is_order_screen) return;
 

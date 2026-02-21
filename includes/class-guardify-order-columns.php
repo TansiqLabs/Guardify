@@ -20,6 +20,13 @@ class Guardify_Order_Columns {
     private array $stats_cache = array();
 
     /**
+     * Cached blocked lists (loaded once per page)
+     */
+    private ?array $blocked_phones_cache = null;
+    private ?array $blocked_ips_cache = null;
+    private ?array $blocked_devices_cache = null;
+
+    /**
      * Generate all possible phone number format variants for DB matching.
      * Handles BD numbers: 01XXXXXXXXX, +8801XXXXXXXXX, 8801XXXXXXXXX, etc.
      */
@@ -353,6 +360,9 @@ class Guardify_Order_Columns {
      * Get customer statistics by phone
      * Combines WooCommerce order statuses AND courier delivery statuses (Steadfast, etc.)
      * Score aggregates data from all integrated couriers
+     *
+     * Performance: Uses single SQL query with conditional aggregation instead of 6 separate queries.
+     * External API fallback removed from sync rendering — courier data fetched only from local DB.
      */
     private function get_customer_stats(string $phone): array {
         if (empty($phone)) {
@@ -389,72 +399,55 @@ class Guardify_Order_Columns {
                 $addresses_table = $wpdb->prefix . 'wc_order_addresses';
                 $meta_table = $wpdb->prefix . 'wc_orders_meta';
                 
-                // HPOS: billing phone lives in wc_order_addresses (address_type='billing')
-                // Get total orders
-                $stats['total'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$orders_table} o
+                // Single query with conditional aggregation — replaces 4 separate queries
+                $row = $wpdb->get_row($wpdb->prepare(
+                    "SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN o.status IN ('wc-completed', 'completed') THEN 1 ELSE 0 END) as delivered,
+                        SUM(CASE WHEN o.status IN ('wc-refunded', 'refunded', 'wc-failed', 'failed') THEN 1 ELSE 0 END) as returned,
+                        SUM(CASE WHEN o.status IN ('wc-cancelled', 'cancelled') THEN 1 ELSE 0 END) as cancelled
+                    FROM {$orders_table} o
                     INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
                     WHERE a.phone {$phone_clause}
                     AND o.status NOT IN ('trash')",
                     ...$phone_params
                 ));
                 
-                // Get delivered (WC completed) orders
-                $stats['delivered'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$orders_table} o
-                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                    WHERE a.phone {$phone_clause}
-                    AND o.status IN ('wc-completed', 'completed')",
-                    ...$phone_params
-                ));
+                if ($row) {
+                    $stats['total'] = (int) $row->total;
+                    $stats['delivered'] = (int) $row->delivered;
+                    $stats['returned'] = (int) $row->returned;
+                    $stats['cancelled'] = (int) $row->cancelled;
+                }
                 
-                // Get returned/refunded orders
-                $stats['returned'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$orders_table} o
-                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                    WHERE a.phone {$phone_clause}
-                    AND o.status IN ('wc-refunded', 'refunded', 'wc-failed', 'failed')",
-                    ...$phone_params
-                ));
-                
-                // Get cancelled orders
-                $stats['cancelled'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$orders_table} o
-                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                    WHERE a.phone {$phone_clause}
-                    AND o.status IN ('wc-cancelled', 'cancelled')",
-                    ...$phone_params
-                ));
-                
-                // ===== COURIER DELIVERY STATUS (Steadfast + future couriers) =====
-                // Count orders with courier "delivered" status
-                $stats['courier_delivered'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(DISTINCT o.id) FROM {$orders_table} o
+                // Single query for courier stats — replaces 2 separate queries
+                $courier_rows = $wpdb->get_results($wpdb->prepare(
+                    "SELECT 
+                        SUM(CASE WHEN m.meta_value IN ('delivered', 'delivered_approval_pending', 'partial_delivered', 'partial_delivered_approval_pending') THEN 1 ELSE 0 END) as courier_delivered,
+                        SUM(CASE WHEN m.meta_value IN ('cancelled', 'cancelled_approval_pending') THEN 1 ELSE 0 END) as courier_returned
+                    FROM {$orders_table} o
                     INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
                     INNER JOIN {$meta_table} m ON o.id = m.order_id
                     WHERE a.phone {$phone_clause}
                     AND o.status NOT IN ('trash')
-                    AND m.meta_key = '_guardify_steadfast_delivery_status'
-                    AND m.meta_value IN ('delivered', 'delivered_approval_pending', 'partial_delivered', 'partial_delivered_approval_pending')",
+                    AND m.meta_key = '_guardify_steadfast_delivery_status'",
                     ...$phone_params
                 ));
                 
-                // Count orders with courier "cancelled/returned" status
-                $stats['courier_returned'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(DISTINCT o.id) FROM {$orders_table} o
-                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                    INNER JOIN {$meta_table} m ON o.id = m.order_id
-                    WHERE a.phone {$phone_clause}
-                    AND o.status NOT IN ('trash')
-                    AND m.meta_key = '_guardify_steadfast_delivery_status'
-                    AND m.meta_value IN ('cancelled', 'cancelled_approval_pending')",
-                    ...$phone_params
-                ));
+                if (!empty($courier_rows[0])) {
+                    $stats['courier_delivered'] = (int) $courier_rows[0]->courier_delivered;
+                    $stats['courier_returned'] = (int) $courier_rows[0]->courier_returned;
+                }
                 
             } else {
-                // Legacy queries
-                $stats['total'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
+                // Legacy: single query with conditional aggregation
+                $row = $wpdb->get_row($wpdb->prepare(
+                    "SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN p.post_status = 'wc-completed' THEN 1 ELSE 0 END) as delivered,
+                        SUM(CASE WHEN p.post_status IN ('wc-refunded', 'wc-failed') THEN 1 ELSE 0 END) as returned,
+                        SUM(CASE WHEN p.post_status = 'wc-cancelled' THEN 1 ELSE 0 END) as cancelled
+                    FROM {$wpdb->postmeta} pm
                     JOIN {$wpdb->posts} p ON pm.post_id = p.ID
                     WHERE pm.meta_key = '_billing_phone'
                     AND pm.meta_value {$phone_clause}
@@ -463,126 +456,41 @@ class Guardify_Order_Columns {
                     ...$phone_params
                 ));
                 
-                $stats['delivered'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
-                    JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-                    WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value {$phone_clause}
-                    AND p.post_type = 'shop_order'
-                    AND p.post_status IN ('wc-completed')",
-                    ...$phone_params
-                ));
+                if ($row) {
+                    $stats['total'] = (int) $row->total;
+                    $stats['delivered'] = (int) $row->delivered;
+                    $stats['returned'] = (int) $row->returned;
+                    $stats['cancelled'] = (int) $row->cancelled;
+                }
                 
-                $stats['returned'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
-                    JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-                    WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value {$phone_clause}
-                    AND p.post_type = 'shop_order'
-                    AND p.post_status IN ('wc-refunded', 'wc-failed')",
-                    ...$phone_params
-                ));
-                
-                $stats['cancelled'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
-                    JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-                    WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value {$phone_clause}
-                    AND p.post_type = 'shop_order'
-                    AND p.post_status IN ('wc-cancelled')",
-                    ...$phone_params
-                ));
-                
-                // Legacy courier delivery status queries
-                $stats['courier_delivered'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(DISTINCT pm.post_id) FROM {$wpdb->postmeta} pm
+                // Legacy courier stats — single query
+                $courier_row = $wpdb->get_row($wpdb->prepare(
+                    "SELECT 
+                        SUM(CASE WHEN pm2.meta_value IN ('delivered', 'delivered_approval_pending', 'partial_delivered', 'partial_delivered_approval_pending') THEN 1 ELSE 0 END) as courier_delivered,
+                        SUM(CASE WHEN pm2.meta_value IN ('cancelled', 'cancelled_approval_pending') THEN 1 ELSE 0 END) as courier_returned
+                    FROM {$wpdb->postmeta} pm
                     JOIN {$wpdb->posts} p ON pm.post_id = p.ID
                     JOIN {$wpdb->postmeta} pm2 ON pm.post_id = pm2.post_id
                     WHERE pm.meta_key = '_billing_phone'
                     AND pm.meta_value {$phone_clause}
                     AND p.post_type = 'shop_order'
                     AND p.post_status NOT IN ('trash')
-                    AND pm2.meta_key = '_guardify_steadfast_delivery_status'
-                    AND pm2.meta_value IN ('delivered', 'delivered_approval_pending', 'partial_delivered', 'partial_delivered_approval_pending')",
+                    AND pm2.meta_key = '_guardify_steadfast_delivery_status'",
                     ...$phone_params
                 ));
                 
-                $stats['courier_returned'] = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(DISTINCT pm.post_id) FROM {$wpdb->postmeta} pm
-                    JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-                    JOIN {$wpdb->postmeta} pm2 ON pm.post_id = pm2.post_id
-                    WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value {$phone_clause}
-                    AND p.post_type = 'shop_order'
-                    AND p.post_status NOT IN ('trash')
-                    AND pm2.meta_key = '_guardify_steadfast_delivery_status'
-                    AND pm2.meta_value IN ('cancelled', 'cancelled_approval_pending')",
-                    ...$phone_params
-                ));
+                if ($courier_row) {
+                    $stats['courier_delivered'] = (int) $courier_row->courier_delivered;
+                    $stats['courier_returned'] = (int) $courier_row->courier_returned;
+                }
             }
             
             // Merge courier stats: use courier data when available (higher accuracy)
-            // Courier delivered count takes priority if > 0
             if ($stats['courier_delivered'] > 0) {
                 $stats['delivered'] = max($stats['delivered'], $stats['courier_delivered']);
             }
             if ($stats['courier_returned'] > 0) {
                 $stats['returned'] = max($stats['returned'], $stats['courier_returned']);
-            }
-
-            // FALLBACK: if local courier meta is missing (or total is zero), try
-            // fetching aggregated courier history from TansiqLabs (fraud-check API).
-            // This covers sites where courier history is available server-side but
-            // not stored locally — results are cached for 10 minutes.
-            if ((($stats['courier_delivered'] === 0 && $stats['courier_returned'] === 0) || $stats['total'] === 0)) {
-                $trans_key = 'guardify_oc_courier_' . md5($cache_key);
-                $cached_cf = get_transient($trans_key);
-
-                if ($cached_cf === false) {
-                    $api_key = get_option('guardify_site_api_key', '') ?: get_option('guardify_api_key', '');
-                    if (!empty($api_key)) {
-                        $resp = wp_remote_post('https://tansiqlabs.com/api/guardify/fraud-check', array(
-                            'timeout' => 8,
-                            'headers' => array('Content-Type' => 'application/json'),
-                            'body'    => wp_json_encode(array('api_key' => $api_key, 'phone' => $phone)),
-                        ));
-
-                        if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) === 200) {
-                            $body = json_decode(wp_remote_retrieve_body($resp), true);
-                            if (!empty($body['success']) && !empty($body['courier'])) {
-                                $cf = $body['courier'];
-                                $cached_cf = array(
-                                    'totalParcels' => intval($cf['totalParcels'] ?? 0),
-                                    'totalDelivered' => intval($cf['totalDelivered'] ?? 0),
-                                    'totalCancelled' => intval($cf['totalCancelled'] ?? 0),
-                                    'successRate' => intval($cf['successRate'] ?? 0),
-                                );
-                                set_transient($trans_key, $cached_cf, 600); // 10 minutes
-                            } else {
-                                // cache negative result short-term to avoid repeated calls
-                                set_transient($trans_key, array('empty' => true), 300);
-                                $cached_cf = array();
-                            }
-                        } else {
-                            set_transient($trans_key, array('empty' => true), 300);
-                            $cached_cf = array();
-                        }
-                    }
-                }
-
-                if (!empty($cached_cf) && empty($cached_cf['empty'])) {
-                    $stats['courier_delivered'] = max($stats['courier_delivered'], intval($cached_cf['totalDelivered'] ?? 0));
-                    $stats['courier_returned']  = max($stats['courier_returned'], intval($cached_cf['totalCancelled'] ?? 0));
-                    $stats['total'] = max($stats['total'], intval($cached_cf['totalParcels'] ?? 0));
-
-                    // prefer courier counts for delivered/returned when present
-                    if ($stats['courier_delivered'] > 0) {
-                        $stats['delivered'] = max($stats['delivered'], $stats['courier_delivered']);
-                    }
-                    if ($stats['courier_returned'] > 0) {
-                        $stats['returned'] = max($stats['returned'], $stats['courier_returned']);
-                    }
-                }
             }
         } catch (Exception $e) {
             // Return empty stats on error
@@ -597,11 +505,12 @@ class Guardify_Order_Columns {
     /**
      * Check for duplicate order
      * Returns percentage of similarity with recent orders
+     *
+     * Performance: Uses single SQL query with conditional aggregation instead of 3 separate queries.
      */
     private function check_duplicate_order($order): array {
         $order_id = $order->get_id();
         $phone = $order->get_billing_phone();
-        $name = $order->get_billing_first_name() . ' ' . $order->get_billing_last_name();
         $address = $order->get_billing_address_1();
         $ip = $order->get_customer_ip_address();
         
@@ -618,7 +527,6 @@ class Guardify_Order_Columns {
         global $wpdb;
         
         try {
-            // Check for orders with same phone in last 24 hours (excluding current)
             $cutoff_time = gmdate('Y-m-d H:i:s', time() - (24 * 3600));
             
             if (class_exists('Automattic\WooCommerce\Utilities\OrderUtil') && 
@@ -626,55 +534,50 @@ class Guardify_Order_Columns {
                 $orders_table = $wpdb->prefix . 'wc_orders';
                 $addresses_table = $wpdb->prefix . 'wc_order_addresses';
                 
-                // Same phone in 24h (HPOS: phone is in wc_order_addresses)
-                $same_phone = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$orders_table} o
-                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                    WHERE a.phone {$phone_clause}
-                    AND o.id != %d
-                    AND o.date_created_gmt > %s
-                    AND o.status NOT IN ('trash', 'wc-cancelled', 'cancelled')",
-                    ...array_merge($phone_params, array($order_id, $cutoff_time))
-                ));
+                // Build params: phone_params + ip + address + order_id + cutoff
+                $query_params = $phone_params;
                 
-                if ($same_phone > 0) {
-                    $duplicate_score += 40;
-                    $reasons[] = sprintf(__('%d orders with same phone', 'guardify'), $same_phone);
+                $ip_condition = "0";
+                if (!empty($ip) && $ip !== '0.0.0.0') {
+                    $ip_condition = "SUM(CASE WHEN o.ip_address = %s THEN 1 ELSE 0 END)";
+                    $query_params[] = $ip;
                 }
                 
-                // Same IP in 24h (ip_address is in wc_orders directly)
-                if (!empty($ip) && $ip !== '0.0.0.0') {
-                    $same_ip = (int) $wpdb->get_var($wpdb->prepare(
-                        "SELECT COUNT(*) FROM {$orders_table}
-                        WHERE ip_address = %s
-                        AND id != %d
-                        AND date_created_gmt > %s
-                        AND status NOT IN ('trash', 'wc-cancelled', 'cancelled')",
-                        $ip,
-                        $order_id,
-                        $cutoff_time
-                    ));
-                    
+                $addr_condition = "0";
+                if (!empty($address)) {
+                    $addr_condition = "SUM(CASE WHEN a.address_1 = %s THEN 1 ELSE 0 END)";
+                    $query_params[] = $address;
+                }
+                
+                $query_params[] = $order_id;
+                $query_params[] = $cutoff_time;
+                
+                // Single query — replaces 3 separate queries
+                $row = $wpdb->get_row($wpdb->prepare(
+                    "SELECT 
+                        SUM(CASE WHEN a.phone {$phone_clause} THEN 1 ELSE 0 END) as same_phone,
+                        {$ip_condition} as same_ip,
+                        {$addr_condition} as same_address
+                    FROM {$orders_table} o
+                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
+                    WHERE o.id != %d
+                    AND o.date_created_gmt > %s
+                    AND o.status NOT IN ('trash', 'wc-cancelled', 'cancelled')",
+                    ...$query_params
+                ));
+                
+                if ($row) {
+                    $same_phone = (int) $row->same_phone;
+                    if ($same_phone > 0) {
+                        $duplicate_score += 40;
+                        $reasons[] = sprintf(__('%d orders with same phone', 'guardify'), $same_phone);
+                    }
+                    $same_ip = (int) $row->same_ip;
                     if ($same_ip > 0) {
                         $duplicate_score += 30;
                         $reasons[] = sprintf(__('%d orders with same IP', 'guardify'), $same_ip);
                     }
-                }
-                
-                // Same address in 24h (HPOS: address_1 is in wc_order_addresses)
-                if (!empty($address)) {
-                    $same_address = (int) $wpdb->get_var($wpdb->prepare(
-                        "SELECT COUNT(*) FROM {$orders_table} o
-                        INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                        WHERE a.address_1 = %s
-                        AND o.id != %d
-                        AND o.date_created_gmt > %s
-                        AND o.status NOT IN ('trash', 'wc-cancelled', 'cancelled')",
-                        $address,
-                        $order_id,
-                        $cutoff_time
-                    ));
-                    
+                    $same_address = (int) $row->same_address;
                     if ($same_address > 0) {
                         $duplicate_score += 30;
                         $reasons[] = sprintf(__('%d orders with same address', 'guardify'), $same_address);
@@ -682,7 +585,7 @@ class Guardify_Order_Columns {
                 }
                 
             } else {
-                // Legacy queries - simplified
+                // Legacy query — single combined query
                 $same_phone = (int) $wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
                     JOIN {$wpdb->posts} p ON pm.post_id = p.ID
@@ -715,6 +618,21 @@ class Guardify_Order_Columns {
     }
 
     /**
+     * Load blocked lists into cache (once per page load)
+     */
+    private function ensure_blocked_cache(): void {
+        if ($this->blocked_phones_cache === null) {
+            $this->blocked_phones_cache = (array) get_option('guardify_blocked_phones', array());
+        }
+        if ($this->blocked_ips_cache === null) {
+            $this->blocked_ips_cache = (array) get_option('guardify_blocked_ips', array());
+        }
+        if ($this->blocked_devices_cache === null) {
+            $this->blocked_devices_cache = (array) get_option('guardify_blocked_devices', array());
+        }
+    }
+
+    /**
      * Check if phone is blocked
      */
     private function is_phone_blocked(string $phone): bool {
@@ -722,11 +640,11 @@ class Guardify_Order_Columns {
             return false;
         }
         
+        $this->ensure_blocked_cache();
         $variants = $this->get_phone_variants($phone);
-        $blocked_phones = (array) get_option('guardify_blocked_phones', array());
         
         foreach ($variants as $variant) {
-            if (in_array($variant, $blocked_phones, true)) {
+            if (in_array($variant, $this->blocked_phones_cache, true)) {
                 return true;
             }
         }
@@ -741,9 +659,8 @@ class Guardify_Order_Columns {
             return false;
         }
         
-        $blocked_ips = get_option('guardify_blocked_ips', array());
-        
-        return in_array($ip, (array) $blocked_ips, true);
+        $this->ensure_blocked_cache();
+        return in_array($ip, $this->blocked_ips_cache, true);
     }
 
     /**
@@ -754,9 +671,8 @@ class Guardify_Order_Columns {
             return false;
         }
         
-        $blocked_devices = get_option('guardify_blocked_devices', array());
-        
-        return in_array($device_id, (array) $blocked_devices, true);
+        $this->ensure_blocked_cache();
+        return in_array($device_id, $this->blocked_devices_cache, true);
     }
 
     /**
