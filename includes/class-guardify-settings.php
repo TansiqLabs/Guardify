@@ -474,6 +474,7 @@ class Guardify_Settings {
             <!-- Tab Content -->
             <form method="post" action="">
                 <?php wp_nonce_field('guardify_settings'); ?>
+                <input type="hidden" name="guardify_save_settings" value="1">
                 <input type="hidden" name="guardify_settings_page" value="main">
 
                 <!-- Dashboard Tab -->
@@ -2018,10 +2019,20 @@ class Guardify_Settings {
             }
             
             // Sync Steadfast enabled/disabled status — credentials stay on TansiqLabs server
-            if (!empty($data['steadfast']) && !empty($data['steadfast']['api_key'])) {
-                update_option('guardify_steadfast_enabled', '1');
-            } else {
-                update_option('guardify_steadfast_enabled', '0');
+            // Only update if the API explicitly returns a 'steadfast' payload.
+            // This prevents accidental OFF toggles when the server omits the field.
+            if (array_key_exists('steadfast', $data)) {
+                $sf_enabled = false;
+                $sf = $data['steadfast'];
+                if (is_array($sf)) {
+                    if (!empty($sf['enabled'])) {
+                        $sf_enabled = (bool) $sf['enabled'];
+                    }
+                    if (!empty($sf['api_key'])) {
+                        $sf_enabled = true;
+                    }
+                }
+                update_option('guardify_steadfast_enabled', $sf_enabled ? '1' : '0');
             }
 
             // Sync Discord webhook settings from TansiqLabs Console
@@ -2118,6 +2129,7 @@ class Guardify_Settings {
 
             <form method="post" action="">
                 <?php wp_nonce_field('guardify_settings'); ?>
+                <input type="hidden" name="guardify_save_settings" value="1">
                 <input type="hidden" name="guardify_settings_page" value="steadfast">
         
                 <!-- API Settings Card — Credentials managed via TansiqLabs Console -->

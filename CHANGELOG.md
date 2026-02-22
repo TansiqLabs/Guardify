@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.8 — Hotfix: settings no longer “flip OFF”
+
+### Fixed
+- **Settings save reliability:** Added a hidden `guardify_save_settings=1` field to the main Settings form and SteadFast form. This ensures the save handler runs even when the form is submitted via Enter (some browsers don't include the submit button name in POST).
+- **SteadFast “auto OFF” prevention:** License sync now updates `guardify_steadfast_enabled` only when the API explicitly returns a `steadfast` payload. If the server omits this field, the plugin preserves the existing value instead of turning SteadFast OFF.
+
 ## v1.2.7 — Hotfix: WordPress version label
 
 ### Fixed
