@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast courier integration, and order tracking features.
- * Version: 1.2.4
+ * Version: 1.2.5
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
