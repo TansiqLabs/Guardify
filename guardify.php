@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.2.5');
+define('GUARDIFY_VERSION', '1.2.6');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));

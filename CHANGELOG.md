@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.6 — Hotfix: make update checker recognize new version
+
+### Fixed
+- Rebuilt release with updated plugin header to ensure WordPress recognizes the bumped version. Added 1.2.6 tag to force the update checker.
+
 ## v1.2.5 — Settings Page & Defaults Improvements
 
 ### Fixed
