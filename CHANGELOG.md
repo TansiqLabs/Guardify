@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.2.7 — Hotfix: WordPress version label
+
+### Fixed
+- **WordPress plugin list showed 1.2.5:** The plugin header in `guardify.php` still had `Version: 1.2.5` even after releasing v1.2.6. WordPress reads the version from this header, so the UI kept showing 1.2.5. Updated the header + `GUARDIFY_VERSION` constant to 1.2.7.
+
 ## v1.2.6 — Hotfix: make update checker recognize new version
 
 ### Fixed
