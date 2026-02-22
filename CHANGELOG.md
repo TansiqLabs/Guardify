@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.5 — Settings Page & Defaults Improvements
+
+### Fixed
+- **Settings persistence bug:** options on subpages (SteadFast/Discord/Incomplete Orders) were accidentally reset to OFF when saving any other page. The save handler now scopes settings per-page, using a hidden `guardify_settings_page` field.
+- **Defaults kept off after caching flush:** phone cooldown, IP cooldown, VPN block, address detection, name similarity, and notification now default to ON. Compatibility with cached sites verified.
+
+### Changed
+- **SteadFast submenu visibility:** only appears when the integration is actually enabled via TansiqLabs API (license sync).
+- Updated activation defaults to enable core protections by default.
+
+### Technical
+- Refactored `save_settings()` in `class-guardify-settings.php` with page scoping and added hidden fields to each form.
+- Adjusted default `get_option()` fallbacks across settings page and feature classes.
+- Added conditional submenu logic for SteadFast.
+- Version bump to 1.2.5.
+
+
 ## v1.2.3 — Incomplete Order Rewrite: Custom DB Table
 
 ### Changed

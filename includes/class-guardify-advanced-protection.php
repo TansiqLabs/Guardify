@@ -162,14 +162,14 @@ class Guardify_Advanced_Protection {
      * Check if address detection is enabled
      */
     public function is_address_detection_enabled(): bool {
-        return get_option('guardify_address_detection_enabled', '0') === '1';
+        return get_option('guardify_address_detection_enabled', '1') === '1';
     }
 
     /**
      * Check if name similarity detection is enabled
      */
     public function is_name_similarity_enabled(): bool {
-        return get_option('guardify_name_similarity_enabled', '0') === '1';
+        return get_option('guardify_name_similarity_enabled', '1') === '1';
     }
 
     /**
@@ -513,7 +513,7 @@ class Guardify_Advanced_Protection {
      * Check if notifications are enabled
      */
     public function is_notification_enabled(): bool {
-        return get_option('guardify_notification_enabled', '0') === '1';
+        return get_option('guardify_notification_enabled', '1') === '1';
     }
 
     /**

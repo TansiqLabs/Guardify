@@ -36,7 +36,7 @@ class Guardify_VPN_Block {
      * Check if feature is enabled
      */
     public function is_enabled(): bool {
-        return get_option('guardify_vpn_block_enabled', '0') === '1';
+        return get_option('guardify_vpn_block_enabled', '1') === '1';
     }
 
     /**

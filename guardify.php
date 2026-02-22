@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.2.4');
+define('GUARDIFY_VERSION', '1.2.5');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -424,9 +424,9 @@ function guardify_activate(): void {
         'guardify_bd_phone_validation_message' => 'অনুগ্রহ করে একটি সঠিক বাংলাদেশি মোবাইল নাম্বার দিন (যেমন: 01712345678)',
         
         // Cooldown
-        'guardify_phone_cooldown_enabled' => '0',
+        'guardify_phone_cooldown_enabled' => '1',
         'guardify_phone_cooldown_time' => '24',
-        'guardify_ip_cooldown_enabled' => '0',
+        'guardify_ip_cooldown_enabled' => '1',
         'guardify_ip_cooldown_time' => '1',
         'guardify_phone_cooldown_message' => 'আপনি ইতিমধ্যে এই নাম্বার থেকে অর্ডার করেছেন। অনুগ্রহ করে %d ঘন্টা পর আবার চেষ্টা করুন।',
         'guardify_ip_cooldown_message' => 'আপনি ইতিমধ্যে অর্ডার করেছেন। অনুগ্রহ করে %d ঘন্টা পর আবার চেষ্টা করুন।',
@@ -436,7 +436,7 @@ function guardify_activate(): void {
         'guardify_phone_history_enabled' => '1',
         
         // VPN Block
-        'guardify_vpn_block_enabled' => '0',
+        'guardify_vpn_block_enabled' => '1',
         'guardify_vpn_block_message' => 'দুঃখিত, VPN/Proxy ব্যবহার করে অর্ডার করা যাবে না।',
         
         // Advanced Protection - Whitelist
@@ -445,19 +445,19 @@ function guardify_activate(): void {
         'guardify_whitelisted_ips' => '',
         
         // Advanced Protection - Address Detection
-        'guardify_address_detection_enabled' => '0',
+        'guardify_address_detection_enabled' => '1',
         'guardify_max_orders_per_address' => '5',
         'guardify_address_time_hours' => '24',
         'guardify_address_block_message' => 'এই ঠিকানা থেকে অনেক অর্ডার হয়েছে। অনুগ্রহ করে যোগাযোগ করুন।',
         
         // Advanced Protection - Name Similarity
-        'guardify_name_similarity_enabled' => '0',
+        'guardify_name_similarity_enabled' => '1',
         'guardify_name_similarity_threshold' => '80',
         'guardify_name_check_hours' => '24',
         'guardify_similar_name_message' => 'সন্দেহজনক অর্ডার প্যাটার্ন সনাক্ত হয়েছে।',
         
         // Notifications
-        'guardify_notification_enabled' => '0',
+        'guardify_notification_enabled' => '1',
         'guardify_email_notification' => '1',
         
         // SteadFast Courier

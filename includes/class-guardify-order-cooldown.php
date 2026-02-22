@@ -130,14 +130,14 @@ class Guardify_Order_Cooldown {
      * Check if phone cooldown is enabled
      */
     public function is_phone_cooldown_enabled(): bool {
-        return get_option('guardify_phone_cooldown_enabled', '0') === '1';
+        return get_option('guardify_phone_cooldown_enabled', '1') === '1';
     }
 
     /**
      * Check if IP cooldown is enabled
      */
     public function is_ip_cooldown_enabled(): bool {
-        return get_option('guardify_ip_cooldown_enabled', '0') === '1';
+        return get_option('guardify_ip_cooldown_enabled', '1') === '1';
     }
 
     /**

@@ -93,14 +93,17 @@ class Guardify_Settings {
             array($this, 'render_tracking_page')
         );
 
-        add_submenu_page(
-            'guardify-settings',
-            __('SteadFast Courier', 'guardify'),
-            __('SteadFast', 'guardify'),
-            'manage_options',
-            'guardify-steadfast',
-            array($this, 'render_steadfast_page')
-        );
+        // SteadFast submenu — only show when API is connected
+        if (get_option('guardify_steadfast_enabled', '0') === '1') {
+            add_submenu_page(
+                'guardify-settings',
+                __('SteadFast Courier', 'guardify'),
+                __('SteadFast', 'guardify'),
+                'manage_options',
+                'guardify-steadfast',
+                array($this, 'render_steadfast_page')
+            );
+        }
 
         add_submenu_page(
             'guardify-settings',
@@ -201,114 +204,128 @@ class Guardify_Settings {
             return;
         }
 
-        // BD Phone Validation
-        update_option('guardify_bd_phone_validation_enabled', isset($_POST['guardify_bd_phone_validation_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_bd_phone_validation_message'])) {
-            update_option('guardify_bd_phone_validation_message', sanitize_textarea_field($_POST['guardify_bd_phone_validation_message']));
-        }
+        // Determine which page is being saved to avoid cross-page checkbox reset
+        $settings_page = isset($_POST['guardify_settings_page']) ? sanitize_text_field($_POST['guardify_settings_page']) : 'main';
 
-        // Phone Cooldown
-        update_option('guardify_phone_cooldown_enabled', isset($_POST['guardify_phone_cooldown_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_phone_cooldown_time'])) {
-            update_option('guardify_phone_cooldown_time', absint($_POST['guardify_phone_cooldown_time']));
-        }
-        if (isset($_POST['guardify_phone_cooldown_message'])) {
-            update_option('guardify_phone_cooldown_message', sanitize_textarea_field($_POST['guardify_phone_cooldown_message']));
-        }
-
-        // IP Cooldown
-        update_option('guardify_ip_cooldown_enabled', isset($_POST['guardify_ip_cooldown_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_ip_cooldown_time'])) {
-            update_option('guardify_ip_cooldown_time', absint($_POST['guardify_ip_cooldown_time']));
-        }
-        if (isset($_POST['guardify_ip_cooldown_message'])) {
-            update_option('guardify_ip_cooldown_message', sanitize_textarea_field($_POST['guardify_ip_cooldown_message']));
-        }
-        
-        // Contact Number for Cooldown Popup
-        if (isset($_POST['guardify_contact_number'])) {
-            update_option('guardify_contact_number', sanitize_text_field($_POST['guardify_contact_number']));
-        }
-
-        // Order Completed By
-        update_option('guardify_order_completed_by_enabled', isset($_POST['guardify_order_completed_by_enabled']) ? '1' : '0');
-
-        // Phone History
-        update_option('guardify_phone_history_enabled', isset($_POST['guardify_phone_history_enabled']) ? '1' : '0');
-
-        // User Colors
-        if (isset($_POST['guardify_user_color']) && is_array($_POST['guardify_user_color'])) {
-            $user_colors = array();
-            foreach ($_POST['guardify_user_color'] as $user_id => $color_index) {
-                $user_colors[absint($user_id)] = absint($color_index);
+        // =============================================
+        // MAIN SETTINGS PAGE (dashboard, validation, cooldown, tracking, protection tabs)
+        // =============================================
+        if ($settings_page === 'main') {
+            // BD Phone Validation
+            update_option('guardify_bd_phone_validation_enabled', isset($_POST['guardify_bd_phone_validation_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_bd_phone_validation_message'])) {
+                update_option('guardify_bd_phone_validation_message', sanitize_textarea_field($_POST['guardify_bd_phone_validation_message']));
             }
-            update_option('guardify_user_colors', $user_colors);
+
+            // Phone Cooldown
+            update_option('guardify_phone_cooldown_enabled', isset($_POST['guardify_phone_cooldown_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_phone_cooldown_time'])) {
+                update_option('guardify_phone_cooldown_time', absint($_POST['guardify_phone_cooldown_time']));
+            }
+            if (isset($_POST['guardify_phone_cooldown_message'])) {
+                update_option('guardify_phone_cooldown_message', sanitize_textarea_field($_POST['guardify_phone_cooldown_message']));
+            }
+
+            // IP Cooldown
+            update_option('guardify_ip_cooldown_enabled', isset($_POST['guardify_ip_cooldown_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_ip_cooldown_time'])) {
+                update_option('guardify_ip_cooldown_time', absint($_POST['guardify_ip_cooldown_time']));
+            }
+            if (isset($_POST['guardify_ip_cooldown_message'])) {
+                update_option('guardify_ip_cooldown_message', sanitize_textarea_field($_POST['guardify_ip_cooldown_message']));
+            }
+            
+            // Contact Number for Cooldown Popup
+            if (isset($_POST['guardify_contact_number'])) {
+                update_option('guardify_contact_number', sanitize_text_field($_POST['guardify_contact_number']));
+            }
+
+            // Order Completed By
+            update_option('guardify_order_completed_by_enabled', isset($_POST['guardify_order_completed_by_enabled']) ? '1' : '0');
+
+            // Phone History
+            update_option('guardify_phone_history_enabled', isset($_POST['guardify_phone_history_enabled']) ? '1' : '0');
+
+            // User Colors
+            if (isset($_POST['guardify_user_color']) && is_array($_POST['guardify_user_color'])) {
+                $user_colors = array();
+                foreach ($_POST['guardify_user_color'] as $user_id => $color_index) {
+                    $user_colors[absint($user_id)] = absint($color_index);
+                }
+                update_option('guardify_user_colors', $user_colors);
+            }
+
+            // API Key
+            if (isset($_POST['guardify_api_key'])) {
+                update_option('guardify_api_key', sanitize_text_field($_POST['guardify_api_key']));
+            }
+
+            // VPN Block
+            update_option('guardify_vpn_block_enabled', isset($_POST['guardify_vpn_block_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_vpn_block_message'])) {
+                update_option('guardify_vpn_block_message', sanitize_textarea_field($_POST['guardify_vpn_block_message']));
+            }
+
+            // Whitelist Feature
+            update_option('guardify_whitelist_enabled', isset($_POST['guardify_whitelist_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_whitelisted_phones'])) {
+                update_option('guardify_whitelisted_phones', sanitize_textarea_field($_POST['guardify_whitelisted_phones']));
+            }
+            if (isset($_POST['guardify_whitelisted_ips'])) {
+                update_option('guardify_whitelisted_ips', sanitize_textarea_field($_POST['guardify_whitelisted_ips']));
+            }
+
+            // Address Detection
+            update_option('guardify_address_detection_enabled', isset($_POST['guardify_address_detection_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_max_orders_per_address'])) {
+                update_option('guardify_max_orders_per_address', absint($_POST['guardify_max_orders_per_address']));
+            }
+            if (isset($_POST['guardify_address_time_hours'])) {
+                update_option('guardify_address_time_hours', absint($_POST['guardify_address_time_hours']));
+            }
+            if (isset($_POST['guardify_address_block_message'])) {
+                update_option('guardify_address_block_message', sanitize_textarea_field($_POST['guardify_address_block_message']));
+            }
+
+            // Name Similarity Detection
+            update_option('guardify_name_similarity_enabled', isset($_POST['guardify_name_similarity_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_name_similarity_threshold'])) {
+                update_option('guardify_name_similarity_threshold', absint($_POST['guardify_name_similarity_threshold']));
+            }
+            if (isset($_POST['guardify_name_check_hours'])) {
+                update_option('guardify_name_check_hours', absint($_POST['guardify_name_check_hours']));
+            }
+            if (isset($_POST['guardify_similar_name_message'])) {
+                update_option('guardify_similar_name_message', sanitize_textarea_field($_POST['guardify_similar_name_message']));
+            }
+
+            // Notification Settings
+            update_option('guardify_notification_enabled', isset($_POST['guardify_notification_enabled']) ? '1' : '0');
+            update_option('guardify_email_notification', isset($_POST['guardify_email_notification']) ? '1' : '0');
+            if (isset($_POST['guardify_notification_email'])) {
+                update_option('guardify_notification_email', sanitize_email($_POST['guardify_notification_email']));
+            }
         }
 
-        // API Key
-        if (isset($_POST['guardify_api_key'])) {
-            update_option('guardify_api_key', sanitize_text_field($_POST['guardify_api_key']));
+        // =============================================
+        // ABANDONED CART PAGE
+        // =============================================
+        if ($settings_page === 'abandoned_cart') {
+            update_option('guardify_abandoned_cart_enabled', isset($_POST['guardify_abandoned_cart_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_abandoned_cart_retention_days'])) {
+                update_option('guardify_abandoned_cart_retention_days', absint($_POST['guardify_abandoned_cart_retention_days']));
+            }
+            update_option('guardify_incomplete_cooldown_enabled', isset($_POST['guardify_incomplete_cooldown_enabled']) ? '1' : '0');
+            if (isset($_POST['guardify_incomplete_cooldown_minutes'])) {
+                $cd = max(5, min(43200, absint($_POST['guardify_incomplete_cooldown_minutes'])));
+                update_option('guardify_incomplete_cooldown_minutes', $cd);
+            }
         }
 
-        // VPN Block
-        update_option('guardify_vpn_block_enabled', isset($_POST['guardify_vpn_block_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_vpn_block_message'])) {
-            update_option('guardify_vpn_block_message', sanitize_textarea_field($_POST['guardify_vpn_block_message']));
-        }
-
-        // Whitelist Feature
-        update_option('guardify_whitelist_enabled', isset($_POST['guardify_whitelist_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_whitelisted_phones'])) {
-            update_option('guardify_whitelisted_phones', sanitize_textarea_field($_POST['guardify_whitelisted_phones']));
-        }
-        if (isset($_POST['guardify_whitelisted_ips'])) {
-            update_option('guardify_whitelisted_ips', sanitize_textarea_field($_POST['guardify_whitelisted_ips']));
-        }
-
-        // Address Detection
-        update_option('guardify_address_detection_enabled', isset($_POST['guardify_address_detection_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_max_orders_per_address'])) {
-            update_option('guardify_max_orders_per_address', absint($_POST['guardify_max_orders_per_address']));
-        }
-        if (isset($_POST['guardify_address_time_hours'])) {
-            update_option('guardify_address_time_hours', absint($_POST['guardify_address_time_hours']));
-        }
-        if (isset($_POST['guardify_address_block_message'])) {
-            update_option('guardify_address_block_message', sanitize_textarea_field($_POST['guardify_address_block_message']));
-        }
-
-        // Name Similarity Detection
-        update_option('guardify_name_similarity_enabled', isset($_POST['guardify_name_similarity_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_name_similarity_threshold'])) {
-            update_option('guardify_name_similarity_threshold', absint($_POST['guardify_name_similarity_threshold']));
-        }
-        if (isset($_POST['guardify_name_check_hours'])) {
-            update_option('guardify_name_check_hours', absint($_POST['guardify_name_check_hours']));
-        }
-        if (isset($_POST['guardify_similar_name_message'])) {
-            update_option('guardify_similar_name_message', sanitize_textarea_field($_POST['guardify_similar_name_message']));
-        }
-
-        // Notification Settings
-        update_option('guardify_notification_enabled', isset($_POST['guardify_notification_enabled']) ? '1' : '0');
-        update_option('guardify_email_notification', isset($_POST['guardify_email_notification']) ? '1' : '0');
-        if (isset($_POST['guardify_notification_email'])) {
-            update_option('guardify_notification_email', sanitize_email($_POST['guardify_notification_email']));
-        }
-
-        // Incomplete Order Capture
-        update_option('guardify_abandoned_cart_enabled', isset($_POST['guardify_abandoned_cart_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_abandoned_cart_retention_days'])) {
-            update_option('guardify_abandoned_cart_retention_days', absint($_POST['guardify_abandoned_cart_retention_days']));
-        }
-        update_option('guardify_incomplete_cooldown_enabled', isset($_POST['guardify_incomplete_cooldown_enabled']) ? '1' : '0');
-        if (isset($_POST['guardify_incomplete_cooldown_minutes'])) {
-            $cd = max(5, min(43200, absint($_POST['guardify_incomplete_cooldown_minutes'])));
-            update_option('guardify_incomplete_cooldown_minutes', $cd);
-        }
-
-        // Discord Webhook Notification Settings
-        if (isset($_POST['guardify_discord_save'])) {
+        // =============================================
+        // DISCORD PAGE
+        // =============================================
+        if ($settings_page === 'discord') {
             update_option('guardify_discord_enabled', isset($_POST['guardify_discord_enabled']) ? '1' : '0');
             if (isset($_POST['guardify_discord_webhook_url'])) {
                 update_option('guardify_discord_webhook_url', esc_url_raw($_POST['guardify_discord_webhook_url']));
@@ -334,26 +351,30 @@ class Guardify_Settings {
             update_option('guardify_discord_events', $enabled_events);
         }
 
-        // SteadFast Courier Settings — API keys managed via TansiqLabs console, only save local settings
-        update_option('guardify_steadfast_send_notes', isset($_POST['guardify_steadfast_send_notes']) ? '1' : '0');
-        if (isset($_POST['guardify_steadfast_business_name'])) {
-            update_option('guardify_steadfast_business_name', sanitize_text_field($_POST['guardify_steadfast_business_name']));
-        }
-        if (isset($_POST['guardify_steadfast_business_address'])) {
-            update_option('guardify_steadfast_business_address', sanitize_textarea_field($_POST['guardify_steadfast_business_address']));
-        }
-        if (isset($_POST['guardify_steadfast_business_email'])) {
-            update_option('guardify_steadfast_business_email', sanitize_email($_POST['guardify_steadfast_business_email']));
-        }
-        if (isset($_POST['guardify_steadfast_business_phone'])) {
-            update_option('guardify_steadfast_business_phone', sanitize_text_field($_POST['guardify_steadfast_business_phone']));
-        }
-        if (isset($_POST['guardify_steadfast_business_logo'])) {
-            update_option('guardify_steadfast_business_logo', esc_url_raw($_POST['guardify_steadfast_business_logo']));
-        }
-        if (isset($_POST['guardify_steadfast_terms'])) {
-            update_option('guardify_steadfast_terms', sanitize_textarea_field($_POST['guardify_steadfast_terms']));
-        }
+        // =============================================
+        // STEADFAST PAGE — API keys managed via TansiqLabs console, only save local settings
+        // =============================================
+        if ($settings_page === 'steadfast') {
+            update_option('guardify_steadfast_send_notes', isset($_POST['guardify_steadfast_send_notes']) ? '1' : '0');
+            if (isset($_POST['guardify_steadfast_business_name'])) {
+                update_option('guardify_steadfast_business_name', sanitize_text_field($_POST['guardify_steadfast_business_name']));
+            }
+            if (isset($_POST['guardify_steadfast_business_address'])) {
+                update_option('guardify_steadfast_business_address', sanitize_textarea_field($_POST['guardify_steadfast_business_address']));
+            }
+            if (isset($_POST['guardify_steadfast_business_email'])) {
+                update_option('guardify_steadfast_business_email', sanitize_email($_POST['guardify_steadfast_business_email']));
+            }
+            if (isset($_POST['guardify_steadfast_business_phone'])) {
+                update_option('guardify_steadfast_business_phone', sanitize_text_field($_POST['guardify_steadfast_business_phone']));
+            }
+            if (isset($_POST['guardify_steadfast_business_logo'])) {
+                update_option('guardify_steadfast_business_logo', esc_url_raw($_POST['guardify_steadfast_business_logo']));
+            }
+            if (isset($_POST['guardify_steadfast_terms'])) {
+                update_option('guardify_steadfast_terms', sanitize_textarea_field($_POST['guardify_steadfast_terms']));
+            }
+        } // end steadfast page
 
         // Redirect with success message
         wp_redirect(add_query_arg('settings-updated', 'true', wp_get_referer()));
@@ -368,11 +389,11 @@ class Guardify_Settings {
         $bd_phone_validation_enabled = get_option('guardify_bd_phone_validation_enabled', '1');
         $bd_phone_validation_message = get_option('guardify_bd_phone_validation_message', 'অনুগ্রহ করে একটি সঠিক বাংলাদেশি মোবাইল নাম্বার দিন (যেমন: 01712345678)');
         
-        $phone_cooldown_enabled = get_option('guardify_phone_cooldown_enabled', '0');
+        $phone_cooldown_enabled = get_option('guardify_phone_cooldown_enabled', '1');
         $phone_cooldown_time = get_option('guardify_phone_cooldown_time', '24');
         $phone_cooldown_message = get_option('guardify_phone_cooldown_message', 'আপনি ইতিমধ্যে এই নাম্বার থেকে অর্ডার করেছেন। অনুগ্রহ করে %d ঘন্টা পর আবার চেষ্টা করুন।');
         
-        $ip_cooldown_enabled = get_option('guardify_ip_cooldown_enabled', '0');
+        $ip_cooldown_enabled = get_option('guardify_ip_cooldown_enabled', '1');
         $ip_cooldown_time = get_option('guardify_ip_cooldown_time', '1');
         $ip_cooldown_message = get_option('guardify_ip_cooldown_message', 'আপনি ইতিমধ্যে অর্ডার করেছেন। অনুগ্রহ করে %d ঘন্টা পর আবার চেষ্টা করুন।');
         
@@ -381,7 +402,7 @@ class Guardify_Settings {
         $order_completed_by_enabled = get_option('guardify_order_completed_by_enabled', '1');
         $phone_history_enabled = get_option('guardify_phone_history_enabled', '1');
         
-        $vpn_block_enabled = get_option('guardify_vpn_block_enabled', '0');
+        $vpn_block_enabled = get_option('guardify_vpn_block_enabled', '1');
         $vpn_block_message = get_option('guardify_vpn_block_message', 'দুঃখিত, VPN/Proxy ব্যবহার করে অর্ডার করা যাবে না। অনুগ্রহ করে আপনার সাধারণ ইন্টারনেট সংযোগ ব্যবহার করুন।');
 
         // Get active tab
@@ -453,6 +474,7 @@ class Guardify_Settings {
             <!-- Tab Content -->
             <form method="post" action="">
                 <?php wp_nonce_field('guardify_settings'); ?>
+                <input type="hidden" name="guardify_settings_page" value="main">
 
                 <!-- Dashboard Tab -->
                 <div class="guardify-tab-content <?php echo $active_tab === 'dashboard' ? 'active' : ''; ?>" data-tab="dashboard">
@@ -825,8 +847,8 @@ class Guardify_Settings {
                             </div>
                             <?php
                             $whitelist_enabled = get_option('guardify_whitelist_enabled', '0');
-                            $address_detection_enabled = get_option('guardify_address_detection_enabled', '0');
-                            $notification_enabled = get_option('guardify_notification_enabled', '0');
+                            $address_detection_enabled = get_option('guardify_address_detection_enabled', '1');
+                            $notification_enabled = get_option('guardify_notification_enabled', '1');
                             ?>
                             <div class="guardify-stat-card">
                                 <div class="stat-icon" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
@@ -1337,7 +1359,7 @@ class Guardify_Settings {
                             <p class="description"><?php _e('একই ঠিকানা থেকে বারবার অর্ডার আটকাতে এই ফিচার ব্যবহার করুন।', 'guardify'); ?></p>
                         </div>
                         <?php
-                        $address_detection_enabled = get_option('guardify_address_detection_enabled', '0');
+                        $address_detection_enabled = get_option('guardify_address_detection_enabled', '1');
                         $max_orders_per_address = get_option('guardify_max_orders_per_address', '5');
                         $address_time_hours = get_option('guardify_address_time_hours', '24');
                         $address_block_message = get_option('guardify_address_block_message', 'এই ঠিকানা থেকে অনেক অর্ডার হয়েছে। অনুগ্রহ করে যোগাযোগ করুন।');
@@ -1389,7 +1411,7 @@ class Guardify_Settings {
                             <p class="description"><?php _e('একই রকম নাম দিয়ে বিভিন্ন নম্বর থেকে অর্ডার করলে তা সনাক্ত করুন।', 'guardify'); ?></p>
                         </div>
                         <?php
-                        $name_similarity_enabled = get_option('guardify_name_similarity_enabled', '0');
+                        $name_similarity_enabled = get_option('guardify_name_similarity_enabled', '1');
                         $name_similarity_threshold = get_option('guardify_name_similarity_threshold', '80');
                         $name_check_hours = get_option('guardify_name_check_hours', '24');
                         $similar_name_message = get_option('guardify_similar_name_message', 'সন্দেহজনক অর্ডার প্যাটার্ন সনাক্ত হয়েছে।');
@@ -1441,7 +1463,7 @@ class Guardify_Settings {
                             <p class="description"><?php _e('সন্দেহজনক অর্ডার ব্লক হলে ইমেইল নোটিফিকেশন পান।', 'guardify'); ?></p>
                         </div>
                         <?php
-                        $notification_enabled = get_option('guardify_notification_enabled', '0');
+                        $notification_enabled = get_option('guardify_notification_enabled', '1');
                         $email_notification = get_option('guardify_email_notification', '1');
                         $notification_email = get_option('guardify_notification_email', get_option('admin_email'));
                         ?>
@@ -2096,6 +2118,7 @@ class Guardify_Settings {
 
             <form method="post" action="">
                 <?php wp_nonce_field('guardify_settings'); ?>
+                <input type="hidden" name="guardify_settings_page" value="steadfast">
         
                 <!-- API Settings Card — Credentials managed via TansiqLabs Console -->
                 <div class="guardify-card">
@@ -2734,6 +2757,7 @@ class Guardify_Settings {
             <form method="post" action="">
                 <?php wp_nonce_field('guardify_settings'); ?>
                 <input type="hidden" name="guardify_save_settings" value="1">
+                <input type="hidden" name="guardify_settings_page" value="abandoned_cart">
 
                 <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
                     <h2 style="margin-top: 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px;">
@@ -3061,7 +3085,7 @@ class Guardify_Settings {
             <form method="post" action="">
                 <?php wp_nonce_field('guardify_settings'); ?>
                 <input type="hidden" name="guardify_save_settings" value="1">
-                <input type="hidden" name="guardify_discord_save" value="1">
+                <input type="hidden" name="guardify_settings_page" value="discord">
 
                 <!-- Enable/Disable Card -->
                 <div class="guardify-card">
