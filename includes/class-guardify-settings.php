@@ -105,6 +105,18 @@ class Guardify_Settings {
             );
         }
 
+        // Pathao submenu — only show when API is connected
+        if (get_option('guardify_pathao_enabled', '0') === '1') {
+            add_submenu_page(
+                'guardify-settings',
+                __('Pathao Courier', 'guardify'),
+                __('Pathao', 'guardify'),
+                'manage_options',
+                'guardify-pathao',
+                array($this, 'render_pathao_page')
+            );
+        }
+
         add_submenu_page(
             'guardify-settings',
             __('Incomplete Orders', 'guardify'),
@@ -375,6 +387,34 @@ class Guardify_Settings {
                 update_option('guardify_steadfast_terms', sanitize_textarea_field($_POST['guardify_steadfast_terms']));
             }
         } // end steadfast page
+
+        // =============================================
+        // PATHAO PAGE — API keys managed via TansiqLabs console, only save local settings
+        // =============================================
+        if ($settings_page === 'pathao') {
+            update_option('guardify_pathao_send_notes', isset($_POST['guardify_pathao_send_notes']) ? '1' : '0');
+            if (isset($_POST['guardify_pathao_default_store'])) {
+                update_option('guardify_pathao_default_store', sanitize_text_field($_POST['guardify_pathao_default_store']));
+            }
+            if (isset($_POST['guardify_pathao_business_name'])) {
+                update_option('guardify_pathao_business_name', sanitize_text_field($_POST['guardify_pathao_business_name']));
+            }
+            if (isset($_POST['guardify_pathao_business_address'])) {
+                update_option('guardify_pathao_business_address', sanitize_textarea_field($_POST['guardify_pathao_business_address']));
+            }
+            if (isset($_POST['guardify_pathao_business_email'])) {
+                update_option('guardify_pathao_business_email', sanitize_email($_POST['guardify_pathao_business_email']));
+            }
+            if (isset($_POST['guardify_pathao_business_phone'])) {
+                update_option('guardify_pathao_business_phone', sanitize_text_field($_POST['guardify_pathao_business_phone']));
+            }
+            if (isset($_POST['guardify_pathao_business_logo'])) {
+                update_option('guardify_pathao_business_logo', esc_url_raw($_POST['guardify_pathao_business_logo']));
+            }
+            if (isset($_POST['guardify_pathao_terms'])) {
+                update_option('guardify_pathao_terms', sanitize_textarea_field($_POST['guardify_pathao_terms']));
+            }
+        } // end pathao page
 
         // Redirect with success message
         wp_redirect(add_query_arg('settings-updated', 'true', wp_get_referer()));
@@ -2319,6 +2359,240 @@ class Guardify_Settings {
             </form>
 
             <!-- Footer -->
+            <div class="guardify-footer">
+                <p><?php _e('Developed by', 'guardify'); ?> <a href="https://tansiqlabs.com/" target="_blank">Tansiq Labs</a></p>
+            </div>
+        </div>
+        <?php
+    }
+
+    /**
+     * Render Pathao Courier settings page
+     */
+    public function render_pathao_page() {
+        $pt_enabled = get_option('guardify_pathao_enabled', '0');
+        $pt_send_notes = get_option('guardify_pathao_send_notes', '0');
+        $pt_default_store = get_option('guardify_pathao_default_store', '');
+        $pt_business_name = get_option('guardify_pathao_business_name', get_bloginfo('name'));
+        $pt_business_address = get_option('guardify_pathao_business_address', '');
+        $pt_business_email = get_option('guardify_pathao_business_email', get_option('admin_email'));
+        $pt_business_phone = get_option('guardify_pathao_business_phone', '');
+        $pt_business_logo = get_option('guardify_pathao_business_logo', '');
+        $pt_terms = get_option('guardify_pathao_terms', '');
+        ?>
+        <div class="wrap guardify-settings-wrap">
+            <div class="guardify-header">
+                <div class="guardify-header-content">
+                    <div class="guardify-logo">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#fff" width="40" height="40"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+                    </div>
+                    <div>
+                        <h1>Pathao Courier</h1>
+                        <p class="guardify-subtitle"><?php _e('Courier Integration & Invoice System', 'guardify'); ?></p>
+                    </div>
+                </div>
+                <div class="guardify-version-badge">
+                    <span class="version">v<?php echo GUARDIFY_VERSION; ?></span>
+                    <span class="developer">by Tansiq Labs</span>
+                </div>
+            </div>
+
+            <?php if (isset($_GET['settings-updated'])): ?>
+                <div class="notice notice-success is-dismissible guardify-success-notice">
+                    <div class="guardify-notice-content">
+                        <span class="dashicons dashicons-yes-alt"></span>
+                        <div>
+                            <p><strong><?php _e('Settings saved successfully!', 'guardify'); ?></strong></p>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <form method="post" action="">
+                <?php wp_nonce_field('guardify_settings'); ?>
+                <input type="hidden" name="guardify_save_settings" value="1">
+                <input type="hidden" name="guardify_settings_page" value="pathao">
+
+                <!-- API Status Card -->
+                <div class="guardify-card">
+                    <div class="guardify-card-header">
+                        <h2>
+                            <span class="dashicons dashicons-rest-api"></span>
+                            <?php _e('Pathao Courier Status', 'guardify'); ?>
+                        </h2>
+                    </div>
+                    <div class="guardify-card-content">
+                        <?php if ($pt_enabled === '1'): ?>
+                            <div class="guardify-info-box guardify-info-success" style="margin-bottom: 20px;">
+                                <span class="dashicons dashicons-yes-alt" style="color: #059669;"></span>
+                                <div>
+                                    <strong><?php _e('Pathao Connected', 'guardify'); ?></strong>
+                                    <p style="margin: 4px 0 0; color: #666; font-size: 13px;">
+                                        <?php _e('Courier API calls are securely routed through TansiqLabs. Manage credentials at', 'guardify'); ?>
+                                        <a href="https://tansiqlabs.com/console/apps/guardify/sites" target="_blank" style="color: #0d9488; font-weight: 600;">tansiqlabs.com/console</a>
+                                    </p>
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <div class="guardify-info-box guardify-info-warning" style="margin-bottom: 20px;">
+                                <span class="dashicons dashicons-warning" style="color: #d97706;"></span>
+                                <div>
+                                    <strong><?php _e('Pathao Not Connected', 'guardify'); ?></strong>
+                                    <p style="margin: 4px 0 0; color: #666; font-size: 13px;">
+                                        <?php _e('Add your Pathao Client ID & Secret in your', 'guardify'); ?>
+                                        <a href="https://tansiqlabs.com/console/apps/guardify/sites" target="_blank" style="color: #0d9488; font-weight: 600;">TansiqLabs Console</a>
+                                        <?php _e('to enable Pathao courier integration. Credentials sync automatically.', 'guardify'); ?>
+                                    </p>
+                                </div>
+                            </div>
+                        <?php endif; ?>
+
+                        <table class="form-table">
+                            <tr>
+                                <th scope="row"><?php _e('Status', 'guardify'); ?></th>
+                                <td>
+                                    <?php if ($pt_enabled === '1'): ?>
+                                        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: #ecfdf5; color: #059669; border-radius: 6px; font-size: 13px; font-weight: 600;">
+                                            <span class="dashicons dashicons-yes-alt" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                            <?php _e('Active & Synced', 'guardify'); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: #fef3c7; color: #d97706; border-radius: 6px; font-size: 13px; font-weight: 600;">
+                                            <span class="dashicons dashicons-minus" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                            <?php _e('Not Configured', 'guardify'); ?>
+                                        </span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Default Store', 'guardify'); ?></th>
+                                <td>
+                                    <input type="text" name="guardify_pathao_default_store" value="<?php echo esc_attr($pt_default_store); ?>" class="regular-text" placeholder="<?php _e('Store ID from Pathao', 'guardify'); ?>">
+                                    <p class="description"><?php _e('Enter your Pathao store ID. This will be pre-selected when sending orders.', 'guardify'); ?></p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Send Order Notes', 'guardify'); ?></th>
+                                <td>
+                                    <label class="guardify-toggle">
+                                        <input type="checkbox" name="guardify_pathao_send_notes" value="1" <?php checked($pt_send_notes, '1'); ?>>
+                                        <span class="guardify-toggle-slider"></span>
+                                    </label>
+                                    <span class="toggle-label"><?php echo $pt_send_notes === '1' ? '✓ Enabled' : 'Disabled'; ?></span>
+                                    <p class="description"><?php _e('Include customer order notes as special instructions when sending to Pathao.', 'guardify'); ?></p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Business Info Card -->
+                <div class="guardify-card">
+                    <div class="guardify-card-header">
+                        <h2>
+                            <span class="dashicons dashicons-building"></span>
+                            <?php _e('Business Information (for Invoice)', 'guardify'); ?>
+                        </h2>
+                    </div>
+                    <div class="guardify-card-content">
+                        <table class="form-table">
+                            <tr>
+                                <th scope="row"><?php _e('Business Name', 'guardify'); ?></th>
+                                <td>
+                                    <input type="text" name="guardify_pathao_business_name" value="<?php echo esc_attr($pt_business_name); ?>" class="regular-text" placeholder="<?php _e('Your Business Name', 'guardify'); ?>">
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Business Address', 'guardify'); ?></th>
+                                <td>
+                                    <textarea name="guardify_pathao_business_address" rows="3" class="large-text" placeholder="<?php _e('Your Business Address', 'guardify'); ?>"><?php echo esc_textarea($pt_business_address); ?></textarea>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Business Email', 'guardify'); ?></th>
+                                <td>
+                                    <input type="email" name="guardify_pathao_business_email" value="<?php echo esc_attr($pt_business_email); ?>" class="regular-text" placeholder="<?php _e('email@example.com', 'guardify'); ?>">
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Business Phone', 'guardify'); ?></th>
+                                <td>
+                                    <input type="text" name="guardify_pathao_business_phone" value="<?php echo esc_attr($pt_business_phone); ?>" class="regular-text" placeholder="<?php _e('+880 1XXX XXXXXX', 'guardify'); ?>">
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Business Logo URL', 'guardify'); ?></th>
+                                <td>
+                                    <input type="url" name="guardify_pathao_business_logo" value="<?php echo esc_attr($pt_business_logo); ?>" class="large-text" placeholder="<?php _e('https://example.com/logo.png', 'guardify'); ?>">
+                                    <p class="description"><?php _e('Logo image URL for invoice header.', 'guardify'); ?></p>
+                                    <?php if ($pt_business_logo): ?>
+                                        <div style="margin-top: 10px;">
+                                            <img src="<?php echo esc_url($pt_business_logo); ?>" alt="Logo Preview" style="max-height: 50px;">
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php _e('Terms & Conditions', 'guardify'); ?></th>
+                                <td>
+                                    <textarea name="guardify_pathao_terms" rows="4" class="large-text" placeholder="<?php _e('Enter terms and conditions for invoice...', 'guardify'); ?>"><?php echo esc_textarea($pt_terms); ?></textarea>
+                                    <p class="description"><?php _e('This will appear at the bottom of the invoice.', 'guardify'); ?></p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Features Info -->
+                <div class="guardify-card">
+                    <div class="guardify-card-header">
+                        <h2>
+                            <span class="dashicons dashicons-info-outline"></span>
+                            <?php _e('Pathao Features', 'guardify'); ?>
+                        </h2>
+                    </div>
+                    <div class="guardify-card-content">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
+                            <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #667eea;">
+                                <h4 style="margin: 0 0 8px; display: flex; align-items: center; gap: 8px;">
+                                    <span class="dashicons dashicons-upload"></span>
+                                    <?php _e('Send Orders', 'guardify'); ?>
+                                </h4>
+                                <p style="margin: 0; color: #666; font-size: 13px;"><?php _e('Send individual or bulk orders to Pathao courier with location picker.', 'guardify'); ?></p>
+                            </div>
+                            <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #43e97b;">
+                                <h4 style="margin: 0 0 8px; display: flex; align-items: center; gap: 8px;">
+                                    <span class="dashicons dashicons-media-text"></span>
+                                    <?php _e('Print Invoice', 'guardify'); ?>
+                                </h4>
+                                <p style="margin: 0; color: #666; font-size: 13px;"><?php _e('Generate and print professional invoices with your business branding.', 'guardify'); ?></p>
+                            </div>
+                            <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #f093fb;">
+                                <h4 style="margin: 0 0 8px; display: flex; align-items: center; gap: 8px;">
+                                    <span class="dashicons dashicons-location"></span>
+                                    <?php _e('Track Delivery', 'guardify'); ?>
+                                </h4>
+                                <p style="margin: 0; color: #666; font-size: 13px;"><?php _e('Check real-time delivery status for all Pathao consignments.', 'guardify'); ?></p>
+                            </div>
+                            <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #4facfe;">
+                                <h4 style="margin: 0 0 8px; display: flex; align-items: center; gap: 8px;">
+                                    <span class="dashicons dashicons-location-alt"></span>
+                                    <?php _e('Location Picker', 'guardify'); ?>
+                                </h4>
+                                <p style="margin: 0; color: #666; font-size: 13px;"><?php _e('Cascading city → zone → area selection for accurate Pathao deliveries.', 'guardify'); ?></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="guardify-submit">
+                    <button type="submit" name="guardify_save_settings" class="guardify-btn-primary">
+                        <span class="dashicons dashicons-saved"></span>
+                        <?php _e('Save Settings', 'guardify'); ?>
+                    </button>
+                </div>
+            </form>
+
             <div class="guardify-footer">
                 <p><?php _e('Developed by', 'guardify'); ?> <a href="https://tansiqlabs.com/" target="_blank">Tansiq Labs</a></p>
             </div>

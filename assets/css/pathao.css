@@ -1,0 +1,562 @@
+/**
+ * Guardify Pathao Courier Integration - Premium Minimal
+ * Uses emerald/teal palette to complement SteadFast styling.
+ */
+
+:root {
+    --pt-primary: #0d9488;
+    --pt-primary-hover: #0f766e;
+    --pt-success: #059669;
+    --pt-warning: #d97706;
+    --pt-danger: #dc2626;
+    --pt-info: #0284c7;
+    --pt-slate-50: #f8fafc;
+    --pt-slate-100: #f1f5f9;
+    --pt-slate-200: #e2e8f0;
+    --pt-slate-300: #cbd5e1;
+    --pt-slate-400: #94a3b8;
+    --pt-slate-500: #64748b;
+    --pt-slate-600: #475569;
+    --pt-slate-700: #334155;
+    --pt-slate-800: #1e293b;
+    --pt-radius: 6px;
+    --pt-transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   SEND BUTTON
+   ============================================ */
+.guardify-pt-send {
+    background: var(--pt-success);
+    color: white;
+    border: none;
+    border-radius: var(--pt-radius);
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    transition: var(--pt-transition);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.guardify-pt-send:hover {
+    background: #047857;
+    transform: translateY(-1px);
+}
+
+.guardify-pt-send:active {
+    transform: translateY(0);
+}
+
+.guardify-pt-sent {
+    background: var(--pt-primary);
+    color: white;
+    border: none;
+    border-radius: var(--pt-radius);
+    padding: 8px 12px;
+    cursor: default;
+    font-weight: 600;
+    font-size: 11px;
+}
+
+.guardify-pt-failed {
+    background: var(--pt-danger);
+    color: white;
+    border: none;
+    border-radius: var(--pt-radius);
+    padding: 8px 16px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    animation: ptShake 0.5s ease;
+}
+
+@keyframes ptShake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-3px); }
+    75% { transform: translateX(3px); }
+}
+
+.guardify-pt-unauthorized {
+    background: var(--pt-danger);
+    color: white;
+    padding: 8px 10px;
+    font-size: 10px;
+    border: none;
+    border-radius: var(--pt-radius);
+    font-weight: 600;
+}
+
+/* ============================================
+   AMOUNT INPUT
+   ============================================ */
+.guardify-pt-amount {
+    width: 85px !important;
+    padding: 8px 10px;
+    border: 1px solid var(--pt-slate-300);
+    border-radius: var(--pt-radius);
+    text-align: center;
+    font-weight: 600;
+    font-size: 13px;
+    transition: var(--pt-transition);
+    background: white;
+    color: var(--pt-slate-800);
+}
+
+.guardify-pt-amount:focus {
+    outline: none;
+    border-color: var(--pt-primary);
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+}
+
+.guardify-pt-amount-disabled {
+    background: var(--pt-slate-50);
+    color: var(--pt-slate-500);
+    cursor: not-allowed;
+}
+
+/* ============================================
+   CONSIGNMENT ID
+   ============================================ */
+.guardify-pt-consignment-id {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--pt-slate-100);
+    color: var(--pt-slate-700);
+    padding: 5px 10px;
+    border-radius: var(--pt-radius);
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    cursor: pointer;
+    transition: var(--pt-transition);
+    border: 1px solid var(--pt-slate-200);
+    position: relative;
+}
+
+.guardify-pt-consignment-id:hover {
+    background: var(--pt-slate-200);
+    border-color: var(--pt-slate-300);
+}
+
+.guardify-pt-consignment-id .copy-feedback {
+    position: absolute;
+    right: -4px;
+    top: -8px;
+    background: var(--pt-success);
+    color: white;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.guardify-pt-consignment-id.copied .copy-feedback {
+    opacity: 1;
+}
+
+.guardify-pt-no-consignment,
+.guardify-pt-no-print,
+.guardify-pt-no-status {
+    color: var(--pt-slate-400);
+    font-size: 12px;
+}
+
+/* ============================================
+   PRINT BUTTON
+   ============================================ */
+.guardify-pt-print {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: var(--pt-slate-100);
+    border: 1px solid var(--pt-slate-200);
+    border-radius: var(--pt-radius);
+    color: var(--pt-slate-600);
+    transition: var(--pt-transition);
+    text-decoration: none;
+}
+
+.guardify-pt-print:hover {
+    background: var(--pt-primary);
+    border-color: var(--pt-primary);
+    color: white;
+}
+
+.guardify-pt-print .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+/* ============================================
+   DELIVERY STATUS BADGES
+   ============================================ */
+.guardify-pt-status-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.guardify-pt-status {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 50px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+
+/* Pending statuses */
+.guardify-pt-status-pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+/* In-transit statuses */
+.guardify-pt-status-transit {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+/* Delivered */
+.guardify-pt-status-delivered {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+/* Partial delivery */
+.guardify-pt-status-partial {
+    background: #fef9c3;
+    color: #854d0e;
+}
+
+/* Return */
+.guardify-pt-status-return {
+    background: #fce7f3;
+    color: #9d174d;
+}
+
+/* Failed */
+.guardify-pt-status-failed {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* Hold */
+.guardify-pt-status-hold {
+    background: #f3e8ff;
+    color: #6b21a8;
+}
+
+/* Cancelled */
+.guardify-pt-status-cancelled {
+    background: #fecaca;
+    color: #991b1b;
+}
+
+/* Exchange */
+.guardify-pt-status-exchange {
+    background: #e0e7ff;
+    color: #3730a3;
+}
+
+/* Check status button */
+.guardify-pt-check-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--pt-slate-100);
+    border: 1px solid var(--pt-slate-200);
+    border-radius: var(--pt-radius);
+    padding: 4px 10px;
+    font-size: 11px;
+    color: var(--pt-slate-600);
+    cursor: pointer;
+    transition: var(--pt-transition);
+}
+
+.guardify-pt-check-status:hover {
+    background: var(--pt-info);
+    border-color: var(--pt-info);
+    color: white;
+}
+
+.guardify-pt-check-status .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+}
+
+/* Refresh status icon */
+.guardify-pt-refresh-status {
+    cursor: pointer;
+    color: var(--pt-slate-400);
+    transition: var(--pt-transition);
+    font-size: 14px !important;
+    width: 14px !important;
+    height: 14px !important;
+}
+
+.guardify-pt-refresh-status:hover {
+    color: var(--pt-primary);
+    transform: rotate(180deg);
+}
+
+/* ============================================
+   MODAL
+   ============================================ */
+.guardify-pt-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.guardify-pt-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+}
+
+.guardify-pt-modal-content {
+    position: relative;
+    background: white;
+    border-radius: 12px;
+    width: 440px;
+    max-width: 90vw;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
+    animation: ptModalIn 0.2s ease-out;
+}
+
+@keyframes ptModalIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.guardify-pt-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--pt-slate-200);
+    background: var(--pt-slate-50);
+}
+
+.guardify-pt-modal-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--pt-slate-800);
+}
+
+.guardify-pt-modal-close {
+    background: none;
+    border: none;
+    font-size: 22px;
+    color: var(--pt-slate-400);
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: var(--pt-transition);
+}
+
+.guardify-pt-modal-close:hover {
+    color: var(--pt-danger);
+}
+
+.guardify-pt-modal-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.guardify-pt-modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.guardify-pt-modal-field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--pt-slate-600);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.guardify-pt-select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--pt-slate-300);
+    border-radius: var(--pt-radius);
+    font-size: 13px;
+    color: var(--pt-slate-700);
+    background: white;
+    transition: var(--pt-transition);
+    appearance: auto;
+}
+
+.guardify-pt-select:focus {
+    outline: none;
+    border-color: var(--pt-primary);
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+}
+
+.guardify-pt-select:disabled {
+    background: var(--pt-slate-100);
+    color: var(--pt-slate-400);
+    cursor: not-allowed;
+}
+
+.guardify-pt-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--pt-slate-200);
+    background: var(--pt-slate-50);
+}
+
+.guardify-pt-modal-footer .button {
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: var(--pt-radius);
+}
+
+.guardify-pt-modal-footer .button-primary {
+    background: var(--pt-success);
+    border-color: var(--pt-success);
+    color: white;
+    transition: var(--pt-transition);
+}
+
+.guardify-pt-modal-footer .button-primary:hover {
+    background: #047857;
+    border-color: #047857;
+}
+
+/* ============================================
+   BULK REFRESH BUTTON
+   ============================================ */
+.guardify-pt-bulk-refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: white;
+    border: 1px solid var(--pt-slate-300);
+    border-radius: var(--pt-radius);
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--pt-slate-600);
+    cursor: pointer;
+    transition: var(--pt-transition);
+    margin-left: 8px;
+}
+
+.guardify-pt-bulk-refresh:hover {
+    background: var(--pt-primary);
+    border-color: var(--pt-primary);
+    color: white;
+}
+
+.guardify-pt-bulk-refresh .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+}
+
+.guardify-pt-bulk-refresh.loading .dashicons {
+    animation: ptSpin 1s linear infinite;
+}
+
+@keyframes ptSpin {
+    100% { transform: rotate(360deg); }
+}
+
+/* ============================================
+   LOADING STATES
+   ============================================ */
+.guardify-pt-send.loading {
+    background: var(--pt-slate-400);
+    cursor: wait;
+    position: relative;
+}
+
+.guardify-pt-send.loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    width: 12px;
+    height: 12px;
+    border: 2px solid transparent;
+    border-top-color: white;
+    border-radius: 50%;
+    animation: ptSpin 0.6s linear infinite;
+    margin-top: -6px;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 782px) {
+    .guardify-pt-modal-content {
+        width: 95vw;
+    }
+    
+    .guardify-pt-amount {
+        width: 70px !important;
+    }
+}
+
+/* ============================================
+   COLUMN WIDTH HINTS
+   ============================================ */
+.column-guardify_pt_amount {
+    width: 95px;
+}
+.column-guardify_pt_send {
+    width: 80px;
+}
+.column-guardify_pt_print {
+    width: 50px;
+}
+.column-guardify_pt_consignment {
+    width: 130px;
+}
+.column-guardify_pt_status {
+    width: 170px;
+}
+
+/* Fix WooCommerce order list no-link row */
+tr.no-link .order-view {
+    pointer-events: auto;
+}

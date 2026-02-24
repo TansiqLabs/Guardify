@@ -1,5 +1,36 @@
 # Changelog
+## v1.3.0 — Pathao Courier Full Integration
 
+### Added
+- **Pathao Courier Integration:** Full Pathao courier support identical in scope to SteadFast — send orders, track delivery, print invoices, bulk dispatch, and status sync directly from the WooCommerce order list.
+- **Location Picker Modal:** Cascading City → Zone → Area dropdown selection when sending orders to Pathao, with AJAX-powered location loading and WordPress transient caching.
+- **Store Management:** Pathao store selection with configurable default store in settings.
+- **Pathao Settings Page:** New submenu under Guardify with connection status, default store config, send-notes toggle, and business info for invoices.
+- **Bulk Actions:** "Send to Pathao" bulk action with location-aware validation (skips orders without pre-set location data).
+- **Delivery Status Tracking:** Real-time status check and bulk refresh for Pathao orders with automatic WC order status sync (Delivered → Completed, Cancelled → Cancelled).
+- **Order List Columns:** Amount, Send, Print, Consignment ID (click-to-copy), and Delivery Status columns with Pathao-branded styling.
+
+### Technical
+- New `Guardify_Pathao` class (singleton, HPOS-compatible) in `class-guardify-pathao.php`.
+- New `pathao.js` (modal, cascading dropdowns, AJAX handlers) and `pathao.css` (emerald/teal palette, modal, status badges).
+- TansiqLabs backend: Added Pathao fields to Prisma schema (`pathaoClientId`, `pathaoClientSecret`, `pathaoEnabled`).
+- New courier proxy routes: `pathao/send`, `pathao/stores`, `pathao/locations`, `pathao/price`.
+- Updated `courier.ts` with `PathaoCredentials`, OAuth2 token cache, `pathaoRequest()`, `requirePathaoCourier()`.
+- Drizzle migration `0009_pathao_courier.sql` for database schema.
+- Updated `guardify.php` loader and `class-guardify-settings.php` (submenu, save handler, render page).
+
+## v1.2.9 — Pathao Courier Fraud Check Integration
+
+### Added
+- **Pathao Courier Support:** The TansiqLabs fraud-check API now aggregates delivery data from both Steadfast and Pathao Courier. Fraud scoring includes cancellation/delivery ratios from both courier providers for comprehensive risk assessment.
+- **Pathao Plugin Integration:** The Pathao Courier WooCommerce plugin now includes built-in Guardify fraud check — risk scores, signals, and courier history displayed directly in the order list and single order pages.
+- **Multi-Courier Scoring:** The fraud-check endpoint fetches data from Steadfast and Pathao in parallel for faster response times.
+
+### Technical
+- Updated `fraud-check/route.ts` to fetch Pathao order history via OAuth2 and aggregate with Steadfast data.
+- Added `PATHAO_CLIENT_ID` and `PATHAO_CLIENT_SECRET` environment variables for global Pathao fraud data.
+- Created `guardify-fraud-check.php` in Pathao plugin with order list columns, meta box, auto-check on new orders, and AJAX handlers.
+- Updated plugin description to reference Pathao courier integration.
 ## v1.2.8 — Hotfix: settings no longer “flip OFF”
 
 ### Fixed

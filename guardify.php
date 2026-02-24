@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
- * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast courier integration, and order tracking features.
+ * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast & Pathao courier integration, and order tracking features.
  * Version: 1.2.8
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
@@ -282,6 +282,12 @@ function guardify_init(): void {
         guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-steadfast.php', 'Guardify_SteadFast');
         if (class_exists('Guardify_SteadFast')) {
             Guardify_SteadFast::get_instance();
+        }
+        
+        // Pathao Courier Integration
+        guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-pathao.php', 'Guardify_Pathao');
+        if (class_exists('Guardify_Pathao')) {
+            Guardify_Pathao::get_instance();
         }
         
         // Order Columns - Score, Duplicate, Block Action
