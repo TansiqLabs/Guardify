@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast & Pathao courier integration, and order tracking features.
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.3.0');
+define('GUARDIFY_VERSION', '1.4.0');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -256,6 +256,14 @@ function guardify_init(): void {
         Guardify_Discord::get_instance();
     }
 
+    // Blocklist Manager — Loaded on BOTH frontend + admin
+    // Frontend: enforces blocklist at checkout (phone/IP/device blocking)
+    // Admin: manages blocklist UI
+    guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-blocklist.php', 'Guardify_Blocklist');
+    if (class_exists('Guardify_Blocklist')) {
+        Guardify_Blocklist::get_instance();
+    }
+
     // =============================================
     // ADMIN CLASSES - Load only in admin
     // =============================================
@@ -294,12 +302,6 @@ function guardify_init(): void {
         guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-order-columns.php', 'Guardify_Order_Columns');
         if (class_exists('Guardify_Order_Columns')) {
             Guardify_Order_Columns::get_instance();
-        }
-        
-        // Blocklist Manager - Manage blocked phones, IPs, devices
-        guardify_safe_include(GUARDIFY_PLUGIN_DIR . 'includes/class-guardify-blocklist.php', 'Guardify_Blocklist');
-        if (class_exists('Guardify_Blocklist')) {
-            Guardify_Blocklist::get_instance();
         }
     }
 }

@@ -22,16 +22,229 @@ class Guardify_Blocklist {
     }
 
     private function __construct() {
-        // Add submenu
-        add_action('admin_menu', array($this, 'add_submenu'), 20);
+        // ─── Frontend: Enforce blocklist at checkout ───
+        add_action('woocommerce_after_checkout_validation', array($this, 'enforce_blocklist_at_checkout'), 2, 2);
+        add_action('woocommerce_checkout_process', array($this, 'enforce_blocklist_process'), 2);
+        add_action('woocommerce_store_api_checkout_update_order_from_request', array($this, 'enforce_blocklist_block_checkout'), 2, 2);
         
-        // Enqueue scripts
-        add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
+        // CartFlows support
+        add_action('cartflows_checkout_before_process_checkout', array($this, 'enforce_blocklist_process'), 2);
+        add_action('wcf_checkout_before_process_checkout', array($this, 'enforce_blocklist_process'), 2);
+
+        // ─── Admin: UI and management ───
+        if (is_admin()) {
+            add_action('admin_menu', array($this, 'add_submenu'), 20);
+            add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
+        }
         
-        // AJAX handlers
+        // AJAX handlers (must be registered outside is_admin for proper handling)
         add_action('wp_ajax_guardify_remove_from_blocklist', array($this, 'ajax_remove_from_blocklist'));
         add_action('wp_ajax_guardify_add_to_blocklist', array($this, 'ajax_add_to_blocklist'));
         add_action('wp_ajax_guardify_get_blocked_orders', array($this, 'ajax_get_blocked_orders'));
+    }
+
+    // =========================================================================
+    // CHECKOUT ENFORCEMENT — Block orders from blocklisted phones/IPs/devices
+    // =========================================================================
+
+    /**
+     * Get all phone variants for a given BD phone number
+     * Ensures blocklist matching works regardless of phone format stored
+     */
+    private function get_phone_variants(string $phone): array {
+        $phone = preg_replace('/[\s\-\(\)\+]+/', '', $phone);
+        $variants = array($phone);
+        
+        // Extract the core 10-digit number (01XXXXXXXXX)
+        $core = '';
+        if (preg_match('/^(?:\+?880)?(1[3-9]\d{8})$/', $phone, $m)) {
+            $core = '0' . $m[1];
+        } elseif (preg_match('/^(01[3-9]\d{8})$/', $phone)) {
+            $core = $phone;
+        }
+        
+        if (!empty($core)) {
+            $digits = substr($core, 1); // 1XXXXXXXXX
+            $variants = array_unique(array(
+                $core,           // 01XXXXXXXXX
+                $digits,         // 1XXXXXXXXX
+                '880' . $digits, // 8801XXXXXXXXX
+                '+880' . $digits,// +8801XXXXXXXXX
+            ));
+        }
+        
+        return $variants;
+    }
+
+    /**
+     * Check if a phone number is in the blocklist (fuzzy match all formats)
+     */
+    public function is_phone_blocked(string $phone): bool {
+        $blocked_phones = get_option('guardify_blocked_phones', array());
+        if (!is_array($blocked_phones) || empty($blocked_phones)) {
+            return false;
+        }
+        
+        $variants = $this->get_phone_variants($phone);
+        foreach ($blocked_phones as $blocked) {
+            $blocked_variants = $this->get_phone_variants($blocked);
+            if (!empty(array_intersect($variants, $blocked_variants))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if an IP address is in the blocklist
+     */
+    public function is_ip_blocked(string $ip): bool {
+        $blocked_ips = get_option('guardify_blocked_ips', array());
+        if (!is_array($blocked_ips) || empty($blocked_ips)) {
+            return false;
+        }
+        return in_array($ip, $blocked_ips, true);
+    }
+
+    /**
+     * Get the client IP address (reuse logic from cooldown class)
+     */
+    private function get_client_ip(): string {
+        $ip_keys = array(
+            'HTTP_CF_CONNECTING_IP',
+            'HTTP_X_REAL_IP',
+            'HTTP_X_FORWARDED_FOR',
+            'HTTP_X_FORWARDED',
+            'HTTP_X_CLUSTER_CLIENT_IP',
+            'HTTP_FORWARDED_FOR',
+            'HTTP_FORWARDED',
+            'REMOTE_ADDR'
+        );
+
+        foreach ($ip_keys as $key) {
+            if (!empty($_SERVER[$key])) {
+                $ip = $_SERVER[$key];
+                if (strpos($ip, ',') !== false) {
+                    $ips = explode(',', $ip);
+                    $ip = trim($ips[0]);
+                }
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
+            }
+        }
+        return isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0';
+    }
+
+    /**
+     * Enforce blocklist during woocommerce_checkout_process
+     */
+    public function enforce_blocklist_process(): void {
+        try {
+            if (current_user_can('manage_options')) {
+                return;
+            }
+
+            // Check phone blocklist
+            if (isset($_POST['billing_phone'])) {
+                $phone = sanitize_text_field($_POST['billing_phone']);
+                if (!empty($phone) && $this->is_phone_blocked($phone)) {
+                    $this->log_blocked('phone', $phone);
+                    wc_add_notice(
+                        __('দুঃখিত, এই ফোন নাম্বার থেকে অর্ডার গ্রহণ করা সম্ভব হচ্ছে না। সাহায্যের জন্য যোগাযোগ করুন।', 'guardify'),
+                        'error'
+                    );
+                    return;
+                }
+            }
+
+            // Check IP blocklist
+            $ip = $this->get_client_ip();
+            if ($this->is_ip_blocked($ip)) {
+                $this->log_blocked('ip', $ip);
+                wc_add_notice(
+                    __('দুঃখিত, আপনার নেটওয়ার্ক থেকে অর্ডার গ্রহণ করা সম্ভব হচ্ছে না। সাহায্যের জন্য যোগাযোগ করুন।', 'guardify'),
+                    'error'
+                );
+            }
+        } catch (\Exception $e) {
+            // Don't block on error
+        }
+    }
+
+    /**
+     * Enforce blocklist during woocommerce_after_checkout_validation
+     */
+    public function enforce_blocklist_at_checkout(array $data, \WP_Error $errors): void {
+        try {
+            if (current_user_can('manage_options')) {
+                return;
+            }
+
+            // Check phone blocklist
+            $phone = $data['billing_phone'] ?? '';
+            if (empty($phone) && isset($_POST['billing_phone'])) {
+                $phone = sanitize_text_field($_POST['billing_phone']);
+            }
+            if (!empty($phone) && $this->is_phone_blocked($phone)) {
+                $this->log_blocked('phone', $phone);
+                $errors->add('guardify_blocked_phone',
+                    __('দুঃখিত, এই ফোন নাম্বার থেকে অর্ডার গ্রহণ করা সম্ভব হচ্ছে না। সাহায্যের জন্য যোগাযোগ করুন।', 'guardify')
+                );
+                return;
+            }
+
+            // Check IP blocklist
+            $ip = $this->get_client_ip();
+            if ($this->is_ip_blocked($ip)) {
+                $this->log_blocked('ip', $ip);
+                $errors->add('guardify_blocked_ip',
+                    __('দুঃখিত, আপনার নেটওয়ার্ক থেকে অর্ডার গ্রহণ করা সম্ভব হচ্ছে না। সাহায্যের জন্য যোগাযোগ করুন।', 'guardify')
+                );
+            }
+        } catch (\Exception $e) {
+            // Don't block on error
+        }
+    }
+
+    /**
+     * Enforce blocklist for WooCommerce Block Checkout
+     */
+    public function enforce_blocklist_block_checkout($order, $request): void {
+        try {
+            if (current_user_can('manage_options')) {
+                return;
+            }
+
+            $phone = $order->get_billing_phone();
+            if (!empty($phone) && $this->is_phone_blocked($phone)) {
+                $this->log_blocked('phone', $phone);
+                throw new \Exception(
+                    __('দুঃখিত, এই ফোন নাম্বার থেকে অর্ডার গ্রহণ করা সম্ভব হচ্ছে না। সাহায্যের জন্য যোগাযোগ করুন।', 'guardify')
+                );
+            }
+
+            $ip = $this->get_client_ip();
+            if ($this->is_ip_blocked($ip)) {
+                $this->log_blocked('ip', $ip);
+                throw new \Exception(
+                    __('দুঃখিত, আপনার নেটওয়ার্ক থেকে অর্ডার গ্রহণ করা সম্ভব হচ্ছে না। সাহায্যের জন্য যোগাযোগ করুন।', 'guardify')
+                );
+            }
+        } catch (\Exception $e) {
+            throw $e;
+        }
+    }
+
+    /**
+     * Log blocked attempt for analytics and notify
+     */
+    private function log_blocked(string $type, string $value): void {
+        do_action('guardify_order_blocked', 'blocklist_' . $type, array(
+            'blocked_type' => $type,
+            'blocked_value' => $value,
+            'ip' => $this->get_client_ip(),
+        ), null);
     }
 
     /**

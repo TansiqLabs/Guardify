@@ -311,8 +311,79 @@ class Guardify_Order_Cooldown {
     }
 
     /**
+     * Get count of SUCCESSFUL orders (completed/processing) for a customer.
+     * Unlike wc_get_customer_order_count() which counts ALL statuses,
+     * this only counts orders that indicate genuine purchasing behavior.
+     *
+     * @param int $user_id WordPress user ID
+     * @return int Number of successful orders
+     */
+    private function get_successful_order_count(int $user_id): int {
+        if (empty($user_id)) {
+            return 0;
+        }
+        
+        $args = array(
+            'customer_id' => $user_id,
+            'status'      => array('wc-completed', 'wc-processing'),
+            'return'      => 'ids',
+            'limit'       => 4, // We only need to know if > 2, so limit query
+        );
+        
+        $orders = wc_get_orders($args);
+        return count($orders);
+    }
+
+    /**
+     * Generate all BD phone number format variants for matching.
+     * Users may enter 01712345678, +8801712345678, 8801712345678, 1712345678.
+     * We must match ALL variants against the database.
+     *
+     * @param string $phone Raw phone number
+     * @return array Array of phone format variants
+     */
+    private function get_bd_phone_variants(string $phone): array {
+        $phone = preg_replace('/[\s\-\(\)\+]+/', '', $phone);
+        $variants = array($phone);
+        
+        // Extract root digits: 1XXXXXXXXX (10 digits)
+        $digits = '';
+        if (preg_match('/^(?:0{0,2}880)?(1[3-9]\d{8})$/', $phone, $m)) {
+            $digits = $m[1];
+        } elseif (preg_match('/^0?(1[3-9]\d{8})$/', $phone)) {
+            $digits = ltrim($phone, '0');
+        }
+        
+        if (!empty($digits)) {
+            $variants = array(
+                '0' . $digits,          // 01XXXXXXXXX
+                $digits,                // 1XXXXXXXXX
+                '880' . $digits,        // 8801XXXXXXXXX
+                '+880' . $digits,       // +8801XXXXXXXXX
+                '00880' . $digits,      // 008801XXXXXXXXX
+            );
+        }
+        
+        return array_unique(array_filter($variants));
+    }
+
+    /**
+     * Build SQL WHERE clause for matching multiple phone variants.
+     * Returns [clause_string, params_array] for use with $wpdb->prepare.
+     *
+     * @param string $column The SQL column name
+     * @param array  $variants Phone number variants
+     * @return array [clause, params]
+     */
+    private function build_phone_in_clause(string $column, array $variants): array {
+        $placeholders = implode(', ', array_fill(0, count($variants), '%s'));
+        return ["{$column} IN ({$placeholders})", $variants];
+    }
+
+    /**
      * Check for recent orders by phone number
      * ইনকমপ্লিট অর্ডার সহ সব অর্ডার চেক করা হবে
+     * Now matches ALL BD phone formats (01X, +880X, 880X, 1X)
      */
     public function has_recent_order_by_phone($phone): bool {
         if (!$this->is_phone_cooldown_enabled()) {
@@ -336,6 +407,9 @@ class Guardify_Order_Cooldown {
             }
         }
 
+        // Generate all BD phone variants for fuzzy matching
+        $variants = $this->get_bd_phone_variants($phone);
+
         // Use UTC time for consistency
         $cutoff_time = time() - ($time_limit * 3600);
         $cutoff_date_gmt = gmdate('Y-m-d H:i:s', $cutoff_time);
@@ -349,28 +423,30 @@ class Guardify_Order_Cooldown {
                 \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled()) {
                 // HPOS enabled - direct query for accuracy
                 $orders_table = $wpdb->prefix . 'wc_orders';
+                list($phone_clause, $phone_params) = $this->build_phone_in_clause('billing_phone', $variants);
                 
                 // Include all non-cancelled/failed statuses including pending, on-hold
+                $query_params = array_merge($phone_params, [$cutoff_date_gmt]);
                 $result = $wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$orders_table}
-                    WHERE billing_phone = %s
+                    WHERE {$phone_clause}
                     AND date_created_gmt > %s
                     AND status NOT IN ('trash', 'wc-cancelled', 'wc-failed', 'cancelled', 'failed')",
-                    $phone,
-                    $cutoff_date_gmt
+                    ...$query_params
                 ));
             } else {
-                // Legacy post meta - include shop_order and shop_order_placehold (for drafts)
+                // Legacy post meta - include shop_order and shop_order_placeholder (for drafts)
+                list($phone_clause, $phone_params) = $this->build_phone_in_clause('pm.meta_value', $variants);
+                $query_params = array_merge($phone_params, [$cutoff_date_local]);
                 $result = $wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
                     JOIN {$wpdb->posts} p ON pm.post_id = p.ID
                     WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value = %s
-                    AND p.post_type IN ('shop_order', 'shop_order_placehold')
+                    AND {$phone_clause}
+                    AND p.post_type IN ('shop_order', 'shop_order_placeholder')
                     AND p.post_date > %s
                     AND p.post_status NOT IN ('trash', 'wc-cancelled', 'wc-failed')",
-                    $phone,
-                    $cutoff_date_local
+                    ...$query_params
                 ));
             }
             
@@ -476,12 +552,14 @@ class Guardify_Order_Cooldown {
                 return;
             }
 
-            // Skip for logged in users with previous successful orders (trusted customers)
+            // Skip for logged in users with previous COMPLETED/PROCESSING orders (trusted customers)
+            // wc_get_customer_order_count counts ALL statuses including failed/cancelled,
+            // so we use a custom query to only count successful orders
             if (is_user_logged_in()) {
                 $user_id = get_current_user_id();
-                $order_count = wc_get_customer_order_count($user_id);
-                if ($order_count > 2) {
-                    return; // Trusted customer with 3+ orders, skip cooldown
+                $completed_count = $this->get_successful_order_count($user_id);
+                if ($completed_count > 2) {
+                    return; // Trusted customer with 3+ successful orders, skip cooldown
                 }
             }
 
@@ -537,8 +615,8 @@ class Guardify_Order_Cooldown {
             // Skip for trusted customers
             if (is_user_logged_in()) {
                 $user_id = get_current_user_id();
-                $order_count = wc_get_customer_order_count($user_id);
-                if ($order_count > 2) {
+                $completed_count = $this->get_successful_order_count($user_id);
+                if ($completed_count > 2) {
                     return;
                 }
             }
@@ -619,8 +697,8 @@ class Guardify_Order_Cooldown {
             // Skip for trusted customers
             if (is_user_logged_in()) {
                 $user_id = get_current_user_id();
-                $order_count = wc_get_customer_order_count($user_id);
-                if ($order_count > 2) {
+                $completed_count = $this->get_successful_order_count($user_id);
+                if ($completed_count > 2) {
                     return;
                 }
             }
@@ -675,8 +753,8 @@ class Guardify_Order_Cooldown {
             // Skip for trusted customers
             if (is_user_logged_in()) {
                 $user_id = get_current_user_id();
-                $order_count = wc_get_customer_order_count($user_id);
-                if ($order_count > 2) {
+                $completed_count = $this->get_successful_order_count($user_id);
+                if ($completed_count > 2) {
                     return;
                 }
             }
@@ -762,12 +840,12 @@ class Guardify_Order_Cooldown {
                 return;
             }
 
-            // Skip for logged in users with previous successful orders (trusted customers)
+            // Skip for trusted customers
             if (is_user_logged_in()) {
                 $user_id = get_current_user_id();
-                $order_count = wc_get_customer_order_count($user_id);
-                if ($order_count > 2) {
-                    return; // Trusted customer with 3+ orders, skip cooldown
+                $completed_count = $this->get_successful_order_count($user_id);
+                if ($completed_count > 2) {
+                    return;
                 }
             }
 
@@ -814,12 +892,12 @@ class Guardify_Order_Cooldown {
                 return;
             }
             
-            // Skip for logged in users with previous successful orders (trusted customers)
+            // Skip for trusted customers
             if (is_user_logged_in()) {
                 $user_id = get_current_user_id();
-                $order_count = wc_get_customer_order_count($user_id);
-                if ($order_count > 2) {
-                    return; // Trusted customer with 3+ orders, skip cooldown
+                $completed_count = $this->get_successful_order_count($user_id);
+                if ($completed_count > 2) {
+                    return; // Trusted customer with 3+ successful orders, skip cooldown
                 }
             }
             
@@ -855,7 +933,8 @@ class Guardify_Order_Cooldown {
     }
     
     /**
-     * Check for recent orders by phone number, excluding a specific order
+     * Check for recent orders by phone number, excluding a specific order.
+     * Uses BD phone variant matching for robust fraud detection.
      */
     private function has_recent_order_by_phone_excluding($phone, $exclude_order_id): bool {
         if (!$this->is_phone_cooldown_enabled()) {
@@ -869,6 +948,9 @@ class Guardify_Order_Cooldown {
             return false;
         }
 
+        // Generate BD phone variants for fuzzy matching
+        $variants = $this->get_bd_phone_variants($phone);
+
         $cutoff_time = time() - ($time_limit * 3600);
         $cutoff_date_gmt = gmdate('Y-m-d H:i:s', $cutoff_time);
         $cutoff_date_local = date('Y-m-d H:i:s', $cutoff_time);
@@ -879,30 +961,30 @@ class Guardify_Order_Cooldown {
             if (class_exists('Automattic\WooCommerce\Utilities\OrderUtil') && 
                 \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled()) {
                 $orders_table = $wpdb->prefix . 'wc_orders';
+                list($phone_clause, $phone_params) = $this->build_phone_in_clause('billing_phone', $variants);
                 
+                $query_params = array_merge($phone_params, [$exclude_order_id, $cutoff_date_gmt]);
                 $result = $wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$orders_table}
-                    WHERE billing_phone = %s
+                    WHERE {$phone_clause}
                     AND id != %d
                     AND date_created_gmt > %s
                     AND status NOT IN ('trash', 'wc-cancelled', 'wc-failed', 'cancelled', 'failed')",
-                    $phone,
-                    $exclude_order_id,
-                    $cutoff_date_gmt
+                    ...$query_params
                 ));
             } else {
+                list($phone_clause, $phone_params) = $this->build_phone_in_clause('pm.meta_value', $variants);
+                $query_params = array_merge($phone_params, [$exclude_order_id, $cutoff_date_local]);
                 $result = $wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
                     JOIN {$wpdb->posts} p ON pm.post_id = p.ID
                     WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value = %s
+                    AND {$phone_clause}
                     AND p.ID != %d
-                    AND p.post_type IN ('shop_order', 'shop_order_placehold')
+                    AND p.post_type IN ('shop_order', 'shop_order_placeholder')
                     AND p.post_date > %s
                     AND p.post_status NOT IN ('trash', 'wc-cancelled', 'wc-failed')",
-                    $phone,
-                    $exclude_order_id,
-                    $cutoff_date_local
+                    ...$query_params
                 ));
             }
             

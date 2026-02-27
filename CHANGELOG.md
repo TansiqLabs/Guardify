@@ -1,4 +1,25 @@
 # Changelog
+## v1.4.0 — Critical Bug Fixes & Blocklist Enforcement
+
+### Fixed
+- **Settings Auto-Reset:** Single form wrapping all tabs caused hidden tabs' checkboxes to reset on save. Now saves only the active tab's settings.
+- **Discord Settings Overwritten:** Daily license cron no longer overwrites locally customized Discord webhook settings. Server config acts as initial defaults only.
+- **Phone Cooldown Bypass:** Fraudsters could bypass cooldown by switching phone formats (01X vs +880X). All BD phone variants are now matched.
+- **Fraud Check Fires Twice:** Dual `woocommerce_new_order` + `woocommerce_checkout_order_created` hooks caused double API calls. Added in-memory static guard.
+- **Trusted Customer Bypass:** `wc_get_customer_order_count` counted failed/cancelled orders. Now only counts completed/processing orders.
+- **Abandoned Cart Recovery:** `mark_recovered_by_phone` missed some BD phone formats, leaving completed orders stuck as "pending".
+- **Legacy SQL Typo:** `shop_order_placehold` corrected to `shop_order_placeholder`.
+
+### Added
+- **Blocklist Checkout Enforcement:** Blocked phones/IPs are now actually enforced at checkout (was admin-only UI before). Supports classic checkout, block checkout, and CartFlows.
+- **Pathao Sync:** License validation now syncs Pathao courier enabled/disabled status from TansiqLabs Console.
+
+### Security
+- Blocklist enforcement includes fuzzy BD phone matching across 5 format variants.
+- Admins are always exempt from blocklist/cooldown checks.
+
+---
+
 ## v1.3.0 — Pathao Courier Full Integration
 
 ### Added

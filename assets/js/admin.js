@@ -20,6 +20,10 @@
             // Fade out then show active tab content
             $('.guardify-tab-content.active').removeClass('active');
             $('[data-tab="' + tab + '"]').addClass('active');
+            
+            // Update hidden field so the correct tab is saved on form submit
+            // This prevents saving one tab from resetting checkboxes on other tabs
+            $('#guardify_active_tab').val(tab);
         });
 
         // Toggle switch with label update

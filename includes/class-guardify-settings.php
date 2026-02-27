@@ -218,104 +218,144 @@ class Guardify_Settings {
 
         // Determine which page is being saved to avoid cross-page checkbox reset
         $settings_page = isset($_POST['guardify_settings_page']) ? sanitize_text_field($_POST['guardify_settings_page']) : 'main';
+        
+        // Determine which tab is active within the main page
+        // This prevents saving one tab from resetting checkboxes on other hidden tabs
+        $active_tab = isset($_POST['guardify_active_tab']) ? sanitize_text_field($_POST['guardify_active_tab']) : '';
 
         // =============================================
-        // MAIN SETTINGS PAGE (dashboard, validation, cooldown, tracking, protection tabs)
+        // MAIN SETTINGS PAGE — save ONLY the active tab's settings
         // =============================================
         if ($settings_page === 'main') {
-            // BD Phone Validation
-            update_option('guardify_bd_phone_validation_enabled', isset($_POST['guardify_bd_phone_validation_enabled']) ? '1' : '0');
-            if (isset($_POST['guardify_bd_phone_validation_message'])) {
-                update_option('guardify_bd_phone_validation_message', sanitize_textarea_field($_POST['guardify_bd_phone_validation_message']));
-            }
-
-            // Phone Cooldown
-            update_option('guardify_phone_cooldown_enabled', isset($_POST['guardify_phone_cooldown_enabled']) ? '1' : '0');
-            if (isset($_POST['guardify_phone_cooldown_time'])) {
-                update_option('guardify_phone_cooldown_time', absint($_POST['guardify_phone_cooldown_time']));
-            }
-            if (isset($_POST['guardify_phone_cooldown_message'])) {
-                update_option('guardify_phone_cooldown_message', sanitize_textarea_field($_POST['guardify_phone_cooldown_message']));
-            }
-
-            // IP Cooldown
-            update_option('guardify_ip_cooldown_enabled', isset($_POST['guardify_ip_cooldown_enabled']) ? '1' : '0');
-            if (isset($_POST['guardify_ip_cooldown_time'])) {
-                update_option('guardify_ip_cooldown_time', absint($_POST['guardify_ip_cooldown_time']));
-            }
-            if (isset($_POST['guardify_ip_cooldown_message'])) {
-                update_option('guardify_ip_cooldown_message', sanitize_textarea_field($_POST['guardify_ip_cooldown_message']));
-            }
-            
-            // Contact Number for Cooldown Popup
-            if (isset($_POST['guardify_contact_number'])) {
-                update_option('guardify_contact_number', sanitize_text_field($_POST['guardify_contact_number']));
-            }
-
-            // Order Completed By
-            update_option('guardify_order_completed_by_enabled', isset($_POST['guardify_order_completed_by_enabled']) ? '1' : '0');
-
-            // Phone History
-            update_option('guardify_phone_history_enabled', isset($_POST['guardify_phone_history_enabled']) ? '1' : '0');
-
-            // User Colors
-            if (isset($_POST['guardify_user_color']) && is_array($_POST['guardify_user_color'])) {
-                $user_colors = array();
-                foreach ($_POST['guardify_user_color'] as $user_id => $color_index) {
-                    $user_colors[absint($user_id)] = absint($color_index);
+        
+            // --- VALIDATION TAB ---
+            if ($active_tab === 'validation' || $active_tab === 'dashboard' || $active_tab === '') {
+                // BD Phone Validation
+                if (isset($_POST['guardify_bd_phone_validation_enabled']) || $active_tab === 'validation') {
+                    update_option('guardify_bd_phone_validation_enabled', isset($_POST['guardify_bd_phone_validation_enabled']) ? '1' : '0');
                 }
-                update_option('guardify_user_colors', $user_colors);
+                if (isset($_POST['guardify_bd_phone_validation_message'])) {
+                    update_option('guardify_bd_phone_validation_message', sanitize_textarea_field($_POST['guardify_bd_phone_validation_message']));
+                }
             }
 
-            // API Key
+            // --- COOLDOWN TAB ---
+            if ($active_tab === 'cooldown' || $active_tab === 'dashboard' || $active_tab === '') {
+                // Phone Cooldown
+                if (isset($_POST['guardify_phone_cooldown_enabled']) || $active_tab === 'cooldown') {
+                    update_option('guardify_phone_cooldown_enabled', isset($_POST['guardify_phone_cooldown_enabled']) ? '1' : '0');
+                }
+                if (isset($_POST['guardify_phone_cooldown_time'])) {
+                    update_option('guardify_phone_cooldown_time', absint($_POST['guardify_phone_cooldown_time']));
+                }
+                if (isset($_POST['guardify_phone_cooldown_message'])) {
+                    update_option('guardify_phone_cooldown_message', sanitize_textarea_field($_POST['guardify_phone_cooldown_message']));
+                }
+
+                // IP Cooldown
+                if (isset($_POST['guardify_ip_cooldown_enabled']) || $active_tab === 'cooldown') {
+                    update_option('guardify_ip_cooldown_enabled', isset($_POST['guardify_ip_cooldown_enabled']) ? '1' : '0');
+                }
+                if (isset($_POST['guardify_ip_cooldown_time'])) {
+                    update_option('guardify_ip_cooldown_time', absint($_POST['guardify_ip_cooldown_time']));
+                }
+                if (isset($_POST['guardify_ip_cooldown_message'])) {
+                    update_option('guardify_ip_cooldown_message', sanitize_textarea_field($_POST['guardify_ip_cooldown_message']));
+                }
+                
+                // Contact Number for Cooldown Popup
+                if (isset($_POST['guardify_contact_number'])) {
+                    update_option('guardify_contact_number', sanitize_text_field($_POST['guardify_contact_number']));
+                }
+            }
+
+            // --- TRACKING TAB ---
+            if ($active_tab === 'tracking' || $active_tab === 'dashboard' || $active_tab === '') {
+                // Order Completed By
+                if (isset($_POST['guardify_order_completed_by_enabled']) || $active_tab === 'tracking') {
+                    update_option('guardify_order_completed_by_enabled', isset($_POST['guardify_order_completed_by_enabled']) ? '1' : '0');
+                }
+
+                // Phone History
+                if (isset($_POST['guardify_phone_history_enabled']) || $active_tab === 'tracking') {
+                    update_option('guardify_phone_history_enabled', isset($_POST['guardify_phone_history_enabled']) ? '1' : '0');
+                }
+            }
+
+            // --- COLORS TAB ---
+            if ($active_tab === 'colors') {
+                // User Colors
+                if (isset($_POST['guardify_user_color']) && is_array($_POST['guardify_user_color'])) {
+                    $user_colors = array();
+                    foreach ($_POST['guardify_user_color'] as $user_id => $color_index) {
+                        $user_colors[absint($user_id)] = absint($color_index);
+                    }
+                    update_option('guardify_user_colors', $user_colors);
+                }
+            }
+
+            // API Key — always save if present (dashboard tab)
             if (isset($_POST['guardify_api_key'])) {
                 update_option('guardify_api_key', sanitize_text_field($_POST['guardify_api_key']));
             }
 
-            // VPN Block
-            update_option('guardify_vpn_block_enabled', isset($_POST['guardify_vpn_block_enabled']) ? '1' : '0');
-            if (isset($_POST['guardify_vpn_block_message'])) {
-                update_option('guardify_vpn_block_message', sanitize_textarea_field($_POST['guardify_vpn_block_message']));
-            }
+            // --- ADVANCED TAB (VPN, Whitelist, Address, Name Similarity, Notifications) ---
+            if ($active_tab === 'advanced' || $active_tab === 'dashboard' || $active_tab === '') {
+                // VPN Block
+                if (isset($_POST['guardify_vpn_block_enabled']) || $active_tab === 'advanced') {
+                    update_option('guardify_vpn_block_enabled', isset($_POST['guardify_vpn_block_enabled']) ? '1' : '0');
+                }
+                if (isset($_POST['guardify_vpn_block_message'])) {
+                    update_option('guardify_vpn_block_message', sanitize_textarea_field($_POST['guardify_vpn_block_message']));
+                }
 
-            // Whitelist Feature
-            update_option('guardify_whitelist_enabled', isset($_POST['guardify_whitelist_enabled']) ? '1' : '0');
-            if (isset($_POST['guardify_whitelisted_phones'])) {
-                update_option('guardify_whitelisted_phones', sanitize_textarea_field($_POST['guardify_whitelisted_phones']));
-            }
-            if (isset($_POST['guardify_whitelisted_ips'])) {
-                update_option('guardify_whitelisted_ips', sanitize_textarea_field($_POST['guardify_whitelisted_ips']));
-            }
+                // Whitelist Feature
+                if (isset($_POST['guardify_whitelist_enabled']) || $active_tab === 'advanced') {
+                    update_option('guardify_whitelist_enabled', isset($_POST['guardify_whitelist_enabled']) ? '1' : '0');
+                }
+                if (isset($_POST['guardify_whitelisted_phones'])) {
+                    update_option('guardify_whitelisted_phones', sanitize_textarea_field($_POST['guardify_whitelisted_phones']));
+                }
+                if (isset($_POST['guardify_whitelisted_ips'])) {
+                    update_option('guardify_whitelisted_ips', sanitize_textarea_field($_POST['guardify_whitelisted_ips']));
+                }
 
-            // Address Detection
-            update_option('guardify_address_detection_enabled', isset($_POST['guardify_address_detection_enabled']) ? '1' : '0');
-            if (isset($_POST['guardify_max_orders_per_address'])) {
-                update_option('guardify_max_orders_per_address', absint($_POST['guardify_max_orders_per_address']));
-            }
-            if (isset($_POST['guardify_address_time_hours'])) {
-                update_option('guardify_address_time_hours', absint($_POST['guardify_address_time_hours']));
-            }
-            if (isset($_POST['guardify_address_block_message'])) {
-                update_option('guardify_address_block_message', sanitize_textarea_field($_POST['guardify_address_block_message']));
-            }
+                // Address Detection
+                if (isset($_POST['guardify_address_detection_enabled']) || $active_tab === 'advanced') {
+                    update_option('guardify_address_detection_enabled', isset($_POST['guardify_address_detection_enabled']) ? '1' : '0');
+                }
+                if (isset($_POST['guardify_max_orders_per_address'])) {
+                    update_option('guardify_max_orders_per_address', absint($_POST['guardify_max_orders_per_address']));
+                }
+                if (isset($_POST['guardify_address_time_hours'])) {
+                    update_option('guardify_address_time_hours', absint($_POST['guardify_address_time_hours']));
+                }
+                if (isset($_POST['guardify_address_block_message'])) {
+                    update_option('guardify_address_block_message', sanitize_textarea_field($_POST['guardify_address_block_message']));
+                }
 
-            // Name Similarity Detection
-            update_option('guardify_name_similarity_enabled', isset($_POST['guardify_name_similarity_enabled']) ? '1' : '0');
-            if (isset($_POST['guardify_name_similarity_threshold'])) {
-                update_option('guardify_name_similarity_threshold', absint($_POST['guardify_name_similarity_threshold']));
-            }
-            if (isset($_POST['guardify_name_check_hours'])) {
-                update_option('guardify_name_check_hours', absint($_POST['guardify_name_check_hours']));
-            }
-            if (isset($_POST['guardify_similar_name_message'])) {
-                update_option('guardify_similar_name_message', sanitize_textarea_field($_POST['guardify_similar_name_message']));
-            }
+                // Name Similarity Detection
+                if (isset($_POST['guardify_name_similarity_enabled']) || $active_tab === 'advanced') {
+                    update_option('guardify_name_similarity_enabled', isset($_POST['guardify_name_similarity_enabled']) ? '1' : '0');
+                }
+                if (isset($_POST['guardify_name_similarity_threshold'])) {
+                    update_option('guardify_name_similarity_threshold', absint($_POST['guardify_name_similarity_threshold']));
+                }
+                if (isset($_POST['guardify_name_check_hours'])) {
+                    update_option('guardify_name_check_hours', absint($_POST['guardify_name_check_hours']));
+                }
+                if (isset($_POST['guardify_similar_name_message'])) {
+                    update_option('guardify_similar_name_message', sanitize_textarea_field($_POST['guardify_similar_name_message']));
+                }
 
-            // Notification Settings
-            update_option('guardify_notification_enabled', isset($_POST['guardify_notification_enabled']) ? '1' : '0');
-            update_option('guardify_email_notification', isset($_POST['guardify_email_notification']) ? '1' : '0');
-            if (isset($_POST['guardify_notification_email'])) {
-                update_option('guardify_notification_email', sanitize_email($_POST['guardify_notification_email']));
+                // Notification Settings
+                if (isset($_POST['guardify_notification_enabled']) || $active_tab === 'advanced') {
+                    update_option('guardify_notification_enabled', isset($_POST['guardify_notification_enabled']) ? '1' : '0');
+                    update_option('guardify_email_notification', isset($_POST['guardify_email_notification']) ? '1' : '0');
+                }
+                if (isset($_POST['guardify_notification_email'])) {
+                    update_option('guardify_notification_email', sanitize_email($_POST['guardify_notification_email']));
+                }
             }
         }
 
@@ -516,6 +556,7 @@ class Guardify_Settings {
                 <?php wp_nonce_field('guardify_settings'); ?>
                 <input type="hidden" name="guardify_save_settings" value="1">
                 <input type="hidden" name="guardify_settings_page" value="main">
+                <input type="hidden" name="guardify_active_tab" id="guardify_active_tab" value="<?php echo esc_attr($active_tab); ?>">
 
                 <!-- Dashboard Tab -->
                 <div class="guardify-tab-content <?php echo $active_tab === 'dashboard' ? 'active' : ''; ?>" data-tab="dashboard">
@@ -2075,26 +2116,49 @@ class Guardify_Settings {
                 update_option('guardify_steadfast_enabled', $sf_enabled ? '1' : '0');
             }
 
+            // Sync Pathao enabled/disabled status from TansiqLabs Console
+            if (array_key_exists('pathao', $data)) {
+                $pa_enabled = false;
+                $pa = $data['pathao'];
+                if (is_array($pa)) {
+                    if (!empty($pa['enabled'])) {
+                        $pa_enabled = (bool) $pa['enabled'];
+                    }
+                    if (!empty($pa['client_id'])) {
+                        $pa_enabled = true;
+                    }
+                }
+                update_option('guardify_pathao_enabled', $pa_enabled ? '1' : '0');
+            }
+
             // Sync Discord webhook settings from TansiqLabs Console
+            // IMPORTANT: Only sync webhook URLs/events from server if local settings are empty.
+            // This prevents the daily cron from overwriting user-customized Discord settings.
+            // Server settings act as initial defaults; local settings always take precedence.
             if (!empty($data['discord'])) {
                 $discord = $data['discord'];
-                update_option('guardify_discord_enabled', !empty($discord['enabled']) ? '1' : '0');
-                if (!empty($discord['webhooks']) && is_array($discord['webhooks'])) {
-                    $webhooks = $discord['webhooks'];
-                    // Use new_order webhook as the primary URL (fallback for all events)
-                    $primary_url = $webhooks['new_order'] ?? $webhooks['incomplete'] ?? $webhooks['identified'] ?? $webhooks['fraud_block'] ?? $webhooks['security'] ?? '';
-                    update_option('guardify_discord_webhook_url', sanitize_url($primary_url));
-                    // Store per-event webhook URLs
-                    update_option('guardify_discord_webhook_urls', array_map('sanitize_url', array_filter($webhooks)));
-                    // Determine which events are enabled (have a webhook URL)
-                    $enabled_events = [];
-                    if (!empty($webhooks['incomplete'])) $enabled_events[] = 'incomplete';
-                    if (!empty($webhooks['identified'])) $enabled_events[] = 'identified';
-                    if (!empty($webhooks['new_order']))  $enabled_events[] = 'new_order';
-                    if (!empty($webhooks['fraud_block'])) $enabled_events[] = 'fraud_block';
-                    if (!empty($webhooks['security']))   $enabled_events[] = 'security';
-                    update_option('guardify_discord_events', $enabled_events);
+                $local_discord_enabled = get_option('guardify_discord_enabled', '');
+                $local_discord_url = get_option('guardify_discord_webhook_url', '');
+                
+                // Only sync if Discord has NEVER been configured locally
+                if ($local_discord_enabled === '' && empty($local_discord_url)) {
+                    update_option('guardify_discord_enabled', !empty($discord['enabled']) ? '1' : '0');
+                    if (!empty($discord['webhooks']) && is_array($discord['webhooks'])) {
+                        $webhooks = $discord['webhooks'];
+                        $primary_url = $webhooks['new_order'] ?? $webhooks['incomplete'] ?? $webhooks['identified'] ?? $webhooks['fraud_block'] ?? $webhooks['security'] ?? '';
+                        update_option('guardify_discord_webhook_url', sanitize_url($primary_url));
+                        update_option('guardify_discord_webhook_urls', array_map('sanitize_url', array_filter($webhooks)));
+                        $enabled_events = [];
+                        if (!empty($webhooks['incomplete'])) $enabled_events[] = 'incomplete';
+                        if (!empty($webhooks['identified'])) $enabled_events[] = 'identified';
+                        if (!empty($webhooks['new_order']))  $enabled_events[] = 'new_order';
+                        if (!empty($webhooks['fraud_block'])) $enabled_events[] = 'fraud_block';
+                        if (!empty($webhooks['security']))   $enabled_events[] = 'security';
+                        update_option('guardify_discord_events', $enabled_events);
+                    }
                 }
+                // Always store the server-side config for reference/fallback
+                update_option('guardify_discord_server_config', $discord);
             }
             
             return array('success' => true, 'license' => $data['license']);

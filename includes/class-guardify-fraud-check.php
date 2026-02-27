@@ -173,15 +173,29 @@ class Guardify_Fraud_Check {
      * @param int $order_id The order ID
      * @param \WC_Order|null $order The order object
      */
+    /**
+     * Static flag to track which orders have been processed in this request.
+     * Prevents woocommerce_new_order + woocommerce_checkout_order_created
+     * from both firing the API call within the same PHP process.
+     * @var array<int, true>
+     */
+    private static $processed_orders = [];
+
     public function auto_fraud_check_on_new_order($order_id, $order = null): void {
         try {
+            // PRIMARY GUARD: In-memory flag prevents double API call within same request
+            // This is more reliable than meta check which may not be persisted yet
+            $order_id = absint($order_id);
+            if (isset(self::$processed_orders[$order_id])) return;
+            self::$processed_orders[$order_id] = true;
+
             // Get order object if not passed
             if (!$order || !($order instanceof \WC_Order)) {
                 $order = wc_get_order($order_id);
             }
             if (!$order) return;
 
-            // Skip if already checked (prevent double-check from dual hooks)
+            // SECONDARY GUARD: Persisted meta check prevents re-check on page reload/cron
             if ($order->get_meta('_guardify_fraud_score') !== '') return;
 
             // Get billing phone

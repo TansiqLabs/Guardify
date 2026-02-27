@@ -523,15 +523,28 @@ class Guardify_Abandoned_Cart {
             return;
         }
 
-        $normalized = preg_replace('/^(?:\+?88)/', '', trim($raw_phone));
+        $normalized = preg_replace('/^(?:\+?880?)/', '', preg_replace('/[\s\-\(\)]+/', '', trim($raw_phone)));
+        // Ensure we have the 01X format
+        if (preg_match('/^(1[3-9]\d{8})$/', $normalized, $m)) {
+            $normalized = '0' . $m[1];
+        }
         if (!preg_match('/^01[3-9]\d{8}$/', $normalized)) {
             return;
         }
 
+        $digits = substr($normalized, 1); // 1XXXXXXXXX
+
         global $wpdb;
 
         // Mark all pending entries for this phone as recovered
-        $variations = [$normalized, '88' . $normalized, '+88' . $normalized];
+        // Match ALL possible BD phone formats to ensure recovery marking works
+        $variations = [
+            $normalized,          // 01XXXXXXXXX
+            $digits,              // 1XXXXXXXXX  
+            '880' . $digits,      // 8801XXXXXXXXX
+            '+880' . $digits,     // +8801XXXXXXXXX
+            '00880' . $digits,    // 008801XXXXXXXXX
+        ];
         $placeholders = implode(',', array_fill(0, count($variations), '%s'));
 
         $wpdb->query($wpdb->prepare(
