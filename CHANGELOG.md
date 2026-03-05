@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.3 — Global Courier Data in Score Column (2026-03-05)
+
+### Added
+- **Global Courier Data:** Score column on WC orders page now shows **global** courier delivery stats from the Guardify Network (Steadfast + Pathao APIs) instead of only local store data. When a customer's fraud check has been run, the Score column shows their total parcels, delivered, cancelled, and success rate across ALL merchants — matching what the portal's fraud-check page shows.
+- **"Fetch Network Data" Button:** When global courier data is not yet cached, a 🔄 button appears in the Score column. Clicking it fetches real-time data from the Steadfast + Pathao APIs via the fraud-check endpoint and updates the Score values instantly.
+- **Automatic Cache:** Global courier data is cached as a WordPress transient (24h TTL) keyed by phone number. Auto-populated when auto fraud check runs on new orders.
+- **AJAX Refresh Endpoint:** New `guardify_refresh_courier` AJAX action for fetching fresh courier data on-demand.
+
+### Fixed
+- **Score Mismatch:** Previously, Score column showed "1" for a customer while the portal showed "33 Delivered, 29 Cancelled" — because the Score only looked at local order meta. Now it uses global API data.
+
 ## v1.5.2 — Multi-Courier Score (2026-03-05)
 
 ### Improved

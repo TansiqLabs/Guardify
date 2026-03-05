@@ -336,4 +336,70 @@ jQuery(document).ready(function($) {
         return false;
     });
 
-});
+    // ==========================================
+    // REFRESH GLOBAL COURIER DATA (Score Column)
+    // ==========================================
+    $(document).on('click', '.guardify-btn-refresh-courier', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        var $btn = $(this);
+        if ($btn.hasClass('loading')) return false;
+
+        var phone = $btn.attr('data-phone') || '';
+        if (!phone) return false;
+
+        $btn.addClass('loading').text('⏳ Fetching...');
+
+        $.post(guardifyOrderColumns.ajax_url, {
+            action: 'guardify_refresh_courier',
+            nonce: guardifyOrderColumns.fraud_nonce,
+            phone: phone
+        }, function(response) {
+            if (response.success && response.data && response.data.courier) {
+                var c = response.data.courier;
+                var $wrap = $btn.closest('.guardify-score-wrap');
+
+                // Update values
+                $wrap.find('.guardify-score-total .score-value').text(c.totalParcels || 0);
+                $wrap.find('.guardify-score-total .score-label').html('🌐 TOTAL');
+                $wrap.find('.guardify-score-delivered .score-value').text(c.totalDelivered || 0);
+                $wrap.find('.guardify-score-returned .score-value').text(c.totalCancelled || 0);
+                $wrap.find('.guardify-score-success .score-value').text((c.successRate || 0) + '%');
+
+                // Update success color
+                var $success = $wrap.find('.guardify-score-success');
+                $success.removeClass('success-low success-medium success-high');
+                if (c.successRate >= 80) $success.addClass('success-high');
+                else if (c.successRate >= 50) $success.addClass('success-medium');
+                else $success.addClass('success-low');
+
+                $wrap.attr('title', 'Global courier data (Steadfast + Pathao) via Guardify Network');
+
+                // Remove button — data is now shown
+                $btn.remove();
+
+                // Also update ALL other Score columns with the same phone number
+                $('.guardify-btn-refresh-courier[data-phone="' + phone + '"]').each(function() {
+                    var $otherBtn = $(this);
+                    var $otherWrap = $otherBtn.closest('.guardify-score-wrap');
+                    $otherWrap.find('.guardify-score-total .score-value').text(c.totalParcels || 0);
+                    $otherWrap.find('.guardify-score-total .score-label').html('🌐 TOTAL');
+                    $otherWrap.find('.guardify-score-delivered .score-value').text(c.totalDelivered || 0);
+                    $otherWrap.find('.guardify-score-returned .score-value').text(c.totalCancelled || 0);
+                    $otherWrap.find('.guardify-score-success .score-value').text((c.successRate || 0) + '%');
+                    $otherWrap.attr('title', 'Global courier data (Steadfast + Pathao) via Guardify Network');
+                    $otherBtn.remove();
+                });
+            } else {
+                $btn.removeClass('loading').text('❌ No data');
+                setTimeout(function() { $btn.text('🔄 Fetch Network Data'); }, 3000);
+            }
+        }).fail(function() {
+            $btn.removeClass('loading').text('❌ Error');
+            setTimeout(function() { $btn.text('🔄 Fetch Network Data'); }, 3000);
+        });
+
+        return false;
+    });
+

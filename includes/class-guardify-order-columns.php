@@ -213,10 +213,16 @@ class Guardify_Order_Columns {
         }
         
         $stats = $this->get_customer_stats($phone);
+        $has_global = !empty($stats['has_global']);
         
         // Success rate: delivered / total (excluding pending/processing which are still in transit)
         $resolved_orders = $stats['delivered'] + $stats['returned'] + $stats['cancelled'];
         $success_rate = $resolved_orders > 0 ? round(($stats['delivered'] / $resolved_orders) * 100, 1) : 0;
+        
+        // If global data available, prefer its success rate
+        if ($has_global && !empty($stats['global_success'])) {
+            $success_rate = (float) $stats['global_success'];
+        }
         
         // If no resolved orders but there are total orders, show 0% (all still pending)
         if ($resolved_orders === 0 && $stats['total'] > 0) {
@@ -231,17 +237,26 @@ class Guardify_Order_Columns {
             $success_class = 'success-medium';
         }
         
-        // Check if courier data is present
+        // Data source indicator
         $has_courier_data = ($stats['courier_delivered'] > 0 || $stats['courier_returned'] > 0);
-        $courier_tooltip = $has_courier_data ? __('Includes courier delivery data (Steadfast + Pathao)', 'guardify') : __('Based on WooCommerce order statuses only', 'guardify');
+        if ($has_global) {
+            $courier_tooltip = __('Global courier data (Steadfast + Pathao) via Guardify Network', 'guardify');
+        } elseif ($has_courier_data) {
+            $courier_tooltip = __('Local courier data (Steadfast + Pathao)', 'guardify');
+        } else {
+            $courier_tooltip = __('Based on WooCommerce order statuses only', 'guardify');
+        }
+
+        // Use global total if available
+        $display_total = $has_global ? ($stats['global_total'] ?? $stats['total']) : $stats['total'];
         
         ?>
-        <div class="guardify-score-wrap" title="<?php echo esc_attr($courier_tooltip); ?>">
-            <span class="guardify-score-item guardify-score-total" title="<?php esc_attr_e('Total Orders', 'guardify'); ?>">
-                <span class="score-value"><?php echo esc_html($stats['total']); ?></span>
-                <span class="score-label"><?php _e('TOTAL', 'guardify'); ?></span>
+        <div class="guardify-score-wrap" title="<?php echo esc_attr($courier_tooltip); ?>" data-phone="<?php echo esc_attr($phone); ?>">
+            <span class="guardify-score-item guardify-score-total" title="<?php echo esc_attr($has_global ? __('Total Parcels (Global Network)', 'guardify') : __('Total Orders (This Store)', 'guardify')); ?>">
+                <span class="score-value"><?php echo esc_html($display_total); ?></span>
+                <span class="score-label"><?php echo $has_global ? '🌐 ' : ''; ?><?php _e('TOTAL', 'guardify'); ?></span>
             </span>
-            <span class="guardify-score-item guardify-score-delivered" title="<?php echo esc_attr(sprintf(__('Delivered Orders (%s)', 'guardify'), $has_courier_data ? 'Courier: Steadfast+Pathao' : 'WC')); ?>">
+            <span class="guardify-score-item guardify-score-delivered" title="<?php echo esc_attr(sprintf(__('Delivered (%s)', 'guardify'), $has_global ? 'Global Network' : ($has_courier_data ? 'Courier: Steadfast+Pathao' : 'WC'))); ?>">
                 <span class="score-value"><?php echo esc_html($stats['delivered']); ?></span>
                 <span class="score-label"><?php _e('DELIVERED', 'guardify'); ?></span>
             </span>
@@ -249,10 +264,18 @@ class Guardify_Order_Columns {
                 <span class="score-value"><?php echo esc_html($stats['returned'] + $stats['cancelled']); ?></span>
                 <span class="score-label"><?php _e('RETURNED', 'guardify'); ?></span>
             </span>
-            <span class="guardify-score-item guardify-score-success <?php echo esc_attr($success_class); ?>" title="<?php echo esc_attr(sprintf(__('Success Rate: %s%% (%d delivered / %d resolved)', 'guardify'), $success_rate, $stats['delivered'], $resolved_orders)); ?>">
+            <span class="guardify-score-item guardify-score-success <?php echo esc_attr($success_class); ?>" title="<?php echo esc_attr(sprintf(__('Success Rate: %s%%', 'guardify'), $success_rate)); ?>">
                 <span class="score-value"><?php echo esc_html($success_rate); ?>%</span>
-                <span class="score-label"><?php echo $has_courier_data ? '📦 ' : ''; ?><?php _e('SUCCESS', 'guardify'); ?></span>
+                <span class="score-label"><?php echo ($has_global ? '📦 ' : ($has_courier_data ? '📦 ' : '')); ?><?php _e('SUCCESS', 'guardify'); ?></span>
             </span>
+            <?php if (!$has_global): ?>
+            <button type="button" class="guardify-btn-refresh-courier" 
+                    data-phone="<?php echo esc_attr($phone); ?>"
+                    title="<?php esc_attr_e('Fetch global courier data from Guardify Network', 'guardify'); ?>"
+                    style="background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;padding:2px 6px;margin-top:3px;font-size:11px;color:#666;">
+                🔄 <?php _e('Fetch Network Data', 'guardify'); ?>
+            </button>
+            <?php endif; ?>
         </div>
         <?php
     }
@@ -514,6 +537,30 @@ class Guardify_Order_Columns {
             }
             if ($stats['courier_returned'] > 0) {
                 $stats['returned'] = max($stats['returned'], $stats['courier_returned']);
+            }
+
+            // ── Overlay GLOBAL courier data from fraud-check API (if cached) ──
+            // The fraud-check API fetches delivery data from Steadfast + Pathao APIs directly,
+            // giving a cross-merchant/global view. This is much more comprehensive than
+            // local order meta which only has THIS store's data.
+            if (class_exists('Guardify_Fraud_Check')) {
+                $global_courier = Guardify_Fraud_Check::get_cached_courier_data($phone);
+                if ($global_courier && !empty($global_courier['totalParcels'])) {
+                    $stats['global_total']     = (int) ($global_courier['totalParcels'] ?? 0);
+                    $stats['global_delivered'] = (int) ($global_courier['totalDelivered'] ?? 0);
+                    $stats['global_cancelled'] = (int) ($global_courier['totalCancelled'] ?? 0);
+                    $stats['global_success']   = (int) ($global_courier['successRate'] ?? 0);
+                    $stats['has_global']       = true;
+
+                    // Use global data for delivered/returned if it has more data than local
+                    if ($stats['global_delivered'] > $stats['delivered']) {
+                        $stats['delivered'] = $stats['global_delivered'];
+                    }
+                    if ($stats['global_cancelled'] > ($stats['returned'] + $stats['cancelled'])) {
+                        $stats['returned']  = $stats['global_cancelled'];
+                        $stats['cancelled'] = 0; // Already included in returned
+                    }
+                }
             }
         } catch (Exception $e) {
             // Return empty stats on error
@@ -962,6 +1009,7 @@ class Guardify_Order_Columns {
             'var guardifyOrderColumns = ' . wp_json_encode(array(
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('guardify-order-columns-nonce'),
+                'fraud_nonce' => wp_create_nonce('guardify_ajax_nonce'),
                 'strings' => array(
                     'blocking' => __('Blocking...', 'guardify'),
                     'unblocking' => __('Unblocking...', 'guardify'),

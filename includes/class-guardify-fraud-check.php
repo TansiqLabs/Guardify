@@ -42,6 +42,9 @@ class Guardify_Fraud_Check {
         // AJAX handler for on-demand fraud check
         add_action('wp_ajax_guardify_fraud_check', [$this, 'ajax_fraud_check']);
 
+        // AJAX handler for refreshing global courier data (Score column)
+        add_action('wp_ajax_guardify_refresh_courier', [$this, 'ajax_refresh_courier']);
+
         // AJAX handler for bulk fraud score update (old orders)
         add_action('wp_ajax_guardify_bulk_fraud_update', [$this, 'ajax_bulk_fraud_update']);
 
@@ -216,6 +219,12 @@ class Guardify_Fraud_Check {
             $order->update_meta_data('_guardify_fraud_checked_at', current_time('mysql'));
             $order->save();
 
+            // Cache courier data as phone-level transient (24h) so Score column can use global data
+            if (!empty($result['courier'])) {
+                $normalized_phone = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
+                set_transient('guardify_courier_' . $normalized_phone, $result['courier'], DAY_IN_SECONDS);
+            }
+
             // Cache the result
             $this->cache_result($phone, $result);
 
@@ -304,6 +313,57 @@ class Guardify_Fraud_Check {
         $order->update_meta_data('_guardify_fraud_risk', $risk);
         $order->update_meta_data('_guardify_fraud_checked_at', current_time('mysql'));
         $order->save();
+    }
+
+    // ── Refresh Global Courier Data ──────────────────────────────────────
+
+    /**
+     * AJAX handler: Fetch fresh courier data from fraud-check API for a phone number.
+     * Called from the Score column refresh button.
+     * Stores result as a phone-level transient (24h) for Score column to read.
+     */
+    public function ajax_refresh_courier(): void {
+        check_ajax_referer('guardify_ajax_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+
+        $phone = sanitize_text_field($_POST['phone'] ?? '');
+        if (empty($phone)) {
+            wp_send_json_error(['message' => 'Phone number required']);
+        }
+
+        $result = $this->fetch_fraud_score($phone);
+        if (!$result || empty($result['success'])) {
+            wp_send_json_error(['message' => 'Failed to fetch fraud data']);
+        }
+
+        // Cache courier data
+        $courier = $result['courier'] ?? null;
+        if ($courier) {
+            $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
+            set_transient('guardify_courier_' . $normalized, $courier, DAY_IN_SECONDS);
+        }
+
+        wp_send_json_success([
+            'courier' => $courier,
+            'score'   => intval($result['score'] ?? 0),
+            'risk'    => $result['risk'] ?? 'low',
+        ]);
+    }
+
+    /**
+     * Get cached global courier data for a phone number.
+     * Returns null if no cached data available.
+     *
+     * @param string $phone Phone number
+     * @return array|null Courier data from fraud-check API: {totalParcels, totalDelivered, totalCancelled, successRate, ...}
+     */
+    public static function get_cached_courier_data(string $phone): ?array {
+        $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
+        $data = get_transient('guardify_courier_' . $normalized);
+        return is_array($data) ? $data : null;
     }
 
     // ── Bulk Update Old Orders ────────────────────────────────────────────
