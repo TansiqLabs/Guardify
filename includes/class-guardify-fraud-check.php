@@ -44,6 +44,7 @@ class Guardify_Fraud_Check {
 
         // AJAX handler for refreshing global courier data (Score column)
         add_action('wp_ajax_guardify_refresh_courier', [$this, 'ajax_refresh_courier']);
+        add_action('wp_ajax_guardify_batch_refresh_courier', [$this, 'ajax_batch_refresh_courier']);
 
         // AJAX handler for bulk fraud score update (old orders)
         add_action('wp_ajax_guardify_bulk_fraud_update', [$this, 'ajax_bulk_fraud_update']);
@@ -364,6 +365,61 @@ class Guardify_Fraud_Check {
         $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
         $data = get_transient('guardify_courier_' . $normalized);
         return is_array($data) ? $data : null;
+    }
+
+    // ── Batch Refresh Courier (auto-load after page paint) ─────────────
+
+    /**
+     * AJAX handler: Batch-fetch global courier data for multiple phones.
+     * Called automatically after WC orders page loads to populate Score columns.
+     * Fetches fraud data for each phone sequentially to avoid API overload.
+     */
+    public function ajax_batch_refresh_courier(): void {
+        check_ajax_referer('guardify_ajax_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+
+        $phones = isset($_POST['phones']) && is_array($_POST['phones'])
+            ? array_map('sanitize_text_field', $_POST['phones'])
+            : [];
+
+        if (empty($phones)) {
+            wp_send_json_error(['message' => 'No phone numbers provided']);
+        }
+
+        // Limit to 25 phones per batch to prevent timeout
+        $phones = array_slice(array_unique($phones), 0, 25);
+        $results = [];
+
+        foreach ($phones as $phone) {
+            if (empty($phone)) continue;
+
+            $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
+
+            // Check cache first — skip API call if already cached
+            $cached = get_transient('guardify_courier_' . $normalized);
+            if (is_array($cached) && !empty($cached['totalParcels'])) {
+                $results[$phone] = $cached;
+                continue;
+            }
+
+            // Fetch from API
+            $result = $this->fetch_fraud_score($phone);
+            if ($result && !empty($result['success']) && !empty($result['courier'])) {
+                $courier = $result['courier'];
+                set_transient('guardify_courier_' . $normalized, $courier, DAY_IN_SECONDS);
+                $results[$phone] = $courier;
+            } else {
+                $results[$phone] = null;
+            }
+
+            // Small delay between API calls to avoid rate limiting (100ms)
+            usleep(100000);
+        }
+
+        wp_send_json_success($results);
     }
 
     // ── Bulk Update Old Orders ────────────────────────────────────────────

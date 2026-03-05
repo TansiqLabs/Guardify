@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.4 — Auto-Load Global Courier Data (2026-03-05)
+
+### Changed
+- **Auto-Load After Page Paint:** Global courier data now loads automatically after the WC orders page finishes rendering. No more manual "Fetch Network Data" button. Score columns show local data instantly on page load, then seamlessly update with global Guardify Network data (Steadfast + Pathao) ~800ms after paint — zero impact on page load speed.
+- **Batch Fetch:** All unique phone numbers on the page are fetched in a single batch AJAX request (`guardify_batch_refresh_courier`), with per-phone caching (24h transient) and rate limiting (100ms between API calls). Cached phones skip the API entirely.
+- **Removed Button:** The "🔄 Fetch Network Data" button has been removed. Data loads automatically like OrderGuard.
+
 ## v1.5.3 — Global Courier Data in Score Column (2026-03-05)
 
 ### Added

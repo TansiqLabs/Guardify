@@ -251,7 +251,7 @@ class Guardify_Order_Columns {
         $display_total = $has_global ? ($stats['global_total'] ?? $stats['total']) : $stats['total'];
         
         ?>
-        <div class="guardify-score-wrap" title="<?php echo esc_attr($courier_tooltip); ?>" data-phone="<?php echo esc_attr($phone); ?>">
+        <div class="guardify-score-wrap" title="<?php echo esc_attr($courier_tooltip); ?>" data-phone="<?php echo esc_attr($phone); ?>"<?php echo !$has_global ? ' data-needs-global="1"' : ''; ?>>
             <span class="guardify-score-item guardify-score-total" title="<?php echo esc_attr($has_global ? __('Total Parcels (Global Network)', 'guardify') : __('Total Orders (This Store)', 'guardify')); ?>">
                 <span class="score-value"><?php echo esc_html($display_total); ?></span>
                 <span class="score-label"><?php echo $has_global ? '🌐 ' : ''; ?><?php _e('TOTAL', 'guardify'); ?></span>
@@ -268,14 +268,6 @@ class Guardify_Order_Columns {
                 <span class="score-value"><?php echo esc_html($success_rate); ?>%</span>
                 <span class="score-label"><?php echo ($has_global ? '📦 ' : ($has_courier_data ? '📦 ' : '')); ?><?php _e('SUCCESS', 'guardify'); ?></span>
             </span>
-            <?php if (!$has_global): ?>
-            <button type="button" class="guardify-btn-refresh-courier" 
-                    data-phone="<?php echo esc_attr($phone); ?>"
-                    title="<?php esc_attr_e('Fetch global courier data from Guardify Network', 'guardify'); ?>"
-                    style="background:none;border:1px solid #ccc;border-radius:3px;cursor:pointer;padding:2px 6px;margin-top:3px;font-size:11px;color:#666;">
-                🔄 <?php _e('Fetch Network Data', 'guardify'); ?>
-            </button>
-            <?php endif; ?>
         </div>
         <?php
     }

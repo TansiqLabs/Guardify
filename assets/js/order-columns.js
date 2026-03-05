@@ -337,69 +337,56 @@ jQuery(document).ready(function($) {
     });
 
     // ==========================================
-    // REFRESH GLOBAL COURIER DATA (Score Column)
+    // AUTO-LOAD GLOBAL COURIER DATA (Score Column)
+    // Runs after page paint — no manual button needed
     // ==========================================
-    $(document).on('click', '.guardify-btn-refresh-courier', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
+    function updateScoreWrap($wrap, c) {
+        $wrap.find('.guardify-score-total .score-value').text(c.totalParcels || 0);
+        $wrap.find('.guardify-score-total .score-label').html('🌐 TOTAL');
+        $wrap.find('.guardify-score-delivered .score-value').text(c.totalDelivered || 0);
+        $wrap.find('.guardify-score-returned .score-value').text(c.totalCancelled || 0);
+        $wrap.find('.guardify-score-success .score-value').text((c.successRate || 0) + '%');
 
-        var $btn = $(this);
-        if ($btn.hasClass('loading')) return false;
+        var $success = $wrap.find('.guardify-score-success');
+        $success.removeClass('success-low success-medium success-high');
+        if (c.successRate >= 80) $success.addClass('success-high');
+        else if (c.successRate >= 50) $success.addClass('success-medium');
+        else $success.addClass('success-low');
 
-        var phone = $btn.attr('data-phone') || '';
-        if (!phone) return false;
+        $wrap.attr('title', 'Global courier data (Steadfast + Pathao) via Guardify Network');
+        $wrap.removeAttr('data-needs-global');
+    }
 
-        $btn.addClass('loading').text('⏳ Fetching...');
-
-        $.post(guardifyOrderColumns.ajax_url, {
-            action: 'guardify_refresh_courier',
-            nonce: guardifyOrderColumns.fraud_nonce,
-            phone: phone
-        }, function(response) {
-            if (response.success && response.data && response.data.courier) {
-                var c = response.data.courier;
-                var $wrap = $btn.closest('.guardify-score-wrap');
-
-                // Update values
-                $wrap.find('.guardify-score-total .score-value').text(c.totalParcels || 0);
-                $wrap.find('.guardify-score-total .score-label').html('🌐 TOTAL');
-                $wrap.find('.guardify-score-delivered .score-value').text(c.totalDelivered || 0);
-                $wrap.find('.guardify-score-returned .score-value').text(c.totalCancelled || 0);
-                $wrap.find('.guardify-score-success .score-value').text((c.successRate || 0) + '%');
-
-                // Update success color
-                var $success = $wrap.find('.guardify-score-success');
-                $success.removeClass('success-low success-medium success-high');
-                if (c.successRate >= 80) $success.addClass('success-high');
-                else if (c.successRate >= 50) $success.addClass('success-medium');
-                else $success.addClass('success-low');
-
-                $wrap.attr('title', 'Global courier data (Steadfast + Pathao) via Guardify Network');
-
-                // Remove button — data is now shown
-                $btn.remove();
-
-                // Also update ALL other Score columns with the same phone number
-                $('.guardify-btn-refresh-courier[data-phone="' + phone + '"]').each(function() {
-                    var $otherBtn = $(this);
-                    var $otherWrap = $otherBtn.closest('.guardify-score-wrap');
-                    $otherWrap.find('.guardify-score-total .score-value').text(c.totalParcels || 0);
-                    $otherWrap.find('.guardify-score-total .score-label').html('🌐 TOTAL');
-                    $otherWrap.find('.guardify-score-delivered .score-value').text(c.totalDelivered || 0);
-                    $otherWrap.find('.guardify-score-returned .score-value').text(c.totalCancelled || 0);
-                    $otherWrap.find('.guardify-score-success .score-value').text((c.successRate || 0) + '%');
-                    $otherWrap.attr('title', 'Global courier data (Steadfast + Pathao) via Guardify Network');
-                    $otherBtn.remove();
-                });
-            } else {
-                $btn.removeClass('loading').text('❌ No data');
-                setTimeout(function() { $btn.text('🔄 Fetch Network Data'); }, 3000);
-            }
-        }).fail(function() {
-            $btn.removeClass('loading').text('❌ Error');
-            setTimeout(function() { $btn.text('🔄 Fetch Network Data'); }, 3000);
+    // Auto-fetch after page paint: collect all phones needing global data, batch fetch
+    setTimeout(function() {
+        var phones = {};
+        $('.guardify-score-wrap[data-needs-global="1"]').each(function() {
+            var phone = $(this).attr('data-phone');
+            if (phone) phones[phone] = true;
         });
 
-        return false;
-    });
+        var phoneList = Object.keys(phones);
+        if (phoneList.length === 0) return;
+
+        console.log('Guardify: Auto-fetching global courier data for', phoneList.length, 'phone(s)');
+
+        $.post(guardifyOrderColumns.ajax_url, {
+            action: 'guardify_batch_refresh_courier',
+            nonce: guardifyOrderColumns.fraud_nonce,
+            phones: phoneList
+        }, function(response) {
+            if (response.success && response.data) {
+                $.each(response.data, function(phone, courierData) {
+                    if (!courierData || !courierData.totalParcels) return;
+                    // Update ALL Score columns with this phone number
+                    $('.guardify-score-wrap[data-phone="' + phone + '"]').each(function() {
+                        updateScoreWrap($(this), courierData);
+                    });
+                });
+                console.log('Guardify: Global courier data loaded for', Object.keys(response.data).length, 'phone(s)');
+            }
+        }).fail(function() {
+            console.warn('Guardify: Failed to fetch global courier data');
+        });
+    }, 800); // 800ms delay ensures page is fully painted first
 
