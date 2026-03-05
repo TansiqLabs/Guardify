@@ -3251,8 +3251,8 @@ class Guardify_Settings {
                     <tbody>
                         <?php foreach ($recent_incomplete as $row): ?>
                             <?php
-                            $name = trim(($row->billing_first_name ?? '') . ' ' . ($row->billing_last_name ?? ''));
-                            $phone = $row->billing_phone ?? '—';
+                            $name = trim(($row->name ?? '') . ' ' . ($row->last_name ?? ''));
+                            $phone = $row->phone ?? '—';
                             $product_names = [];
                             if (!empty($row->products)) {
                                 foreach ($row->products as $p) {

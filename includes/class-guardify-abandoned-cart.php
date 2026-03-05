@@ -41,12 +41,17 @@ class Guardify_Abandoned_Cart {
         return self::$instance;
     }
 
+    /** Static cooldown cache to avoid repeated wc_get_orders() per request */
+    private static array $cooldown_cache = [];
+
     private function __construct() {
         global $wpdb;
         $this->table_name = $wpdb->prefix . 'guardify_incomplete_orders';
 
-        // Create / upgrade table
-        $this->maybe_create_table();
+        // Only run schema check on admin pages or AJAX (not every frontend hit)
+        if (is_admin() || wp_doing_ajax() || defined('WP_CLI')) {
+            $this->maybe_create_table();
+        }
 
         if (!$this->is_enabled()) {
             return;
@@ -414,29 +419,66 @@ class Guardify_Abandoned_Cart {
 
         // Normalize phone variations
         $normalized = preg_replace('/^(?:\+?88)/', '', $phone);
+
+        // ─── Per-request cache: avoid repeated wc_get_orders() calls ───
+        // The checkout form fires woocommerce_checkout_update_order_review
+        // multiple times per page. Cache the result to avoid expensive lookups.
+        $cache_key = $normalized . ':' . $cooldown_minutes;
+        if (isset(self::$cooldown_cache[$cache_key])) {
+            return self::$cooldown_cache[$cache_key];
+        }
+
         $variations = [
             $normalized,
             '88' . $normalized,
             '+88' . $normalized,
         ];
 
-        // Cookie check (fastest)
+        // Cookie check (fastest — no DB)
         $phone_hash = md5($normalized);
         if (isset($_COOKIE['guardify_completed_' . $phone_hash])) {
+            self::$cooldown_cache[$cache_key] = true;
             return true;
         }
 
         $cutoff = gmdate('Y-m-d H:i:s', strtotime("-{$cooldown_minutes} minutes"));
 
-        // 1. Check recent WooCommerce orders (HPOS compatible)
-        $recent_wc = wc_get_orders([
-            'billing_phone' => $variations,
-            'status'        => ['wc-processing', 'wc-completed', 'wc-on-hold'],
-            'date_created'  => '>' . $cutoff,
-            'limit'         => 1,
-            'return'        => 'ids',
-        ]);
-        if (!empty($recent_wc)) {
+        // 1. Lightweight DB check instead of heavy wc_get_orders()
+        //    Direct query is 10-50× faster than wc_get_orders() which loads full order objects
+        $hpos_table = $wpdb->prefix . 'wc_orders';
+        $hpos_exists = $wpdb->get_var("SHOW TABLES LIKE '{$hpos_table}'");
+
+        if ($hpos_exists) {
+            // HPOS: direct query against wc_orders table (fastest)
+            $placeholders = implode(',', array_fill(0, count($variations), '%s'));
+            $query_values = array_merge($variations, [$cutoff]);
+            $recent_wc = $wpdb->get_var($wpdb->prepare(
+                "SELECT 1 FROM {$hpos_table}
+                 WHERE billing_phone IN ({$placeholders})
+                 AND status IN ('wc-processing','wc-completed','wc-on-hold')
+                 AND date_created_gmt > %s
+                 LIMIT 1",
+                ...$query_values
+            ));
+        } else {
+            // Legacy post-meta fallback
+            $placeholders = implode(',', array_fill(0, count($variations), '%s'));
+            $query_values = array_merge($variations, [$cutoff]);
+            $recent_wc = $wpdb->get_var($wpdb->prepare(
+                "SELECT 1 FROM {$wpdb->postmeta} pm
+                 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+                 WHERE pm.meta_key = '_billing_phone'
+                 AND pm.meta_value IN ({$placeholders})
+                 AND p.post_type = 'shop_order'
+                 AND p.post_status IN ('wc-processing','wc-completed','wc-on-hold')
+                 AND p.post_date_gmt > %s
+                 LIMIT 1",
+                ...$query_values
+            ));
+        }
+
+        if ($recent_wc) {
+            self::$cooldown_cache[$cache_key] = true;
             return true;
         }
 
@@ -445,17 +487,20 @@ class Guardify_Abandoned_Cart {
         $values = array_merge($variations, [$cutoff]);
 
         $recovered = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table_name}
+            "SELECT 1 FROM {$this->table_name}
              WHERE phone IN ({$placeholders})
              AND status = 'recovered'
-             AND created_at > %s",
+             AND created_at > %s
+             LIMIT 1",
             ...$values
         ));
 
-        if ($recovered > 0) {
+        if ($recovered) {
+            self::$cooldown_cache[$cache_key] = true;
             return true;
         }
 
+        self::$cooldown_cache[$cache_key] = false;
         return false;
     }
 

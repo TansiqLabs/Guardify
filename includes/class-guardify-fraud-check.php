@@ -265,7 +265,7 @@ class Guardify_Fraud_Check {
         }
 
         $response = wp_remote_post(self::API_ENDPOINT, [
-            'timeout'     => 15,
+            'timeout'     => 5,
             'headers'     => ['Content-Type' => 'application/json'],
             'body'        => wp_json_encode([
                 'api_key' => $api_key,

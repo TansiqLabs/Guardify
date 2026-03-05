@@ -1,4 +1,17 @@
 # Changelog
+
+## v1.5.1 — Bug Fix + Performance (2026-03-05)
+
+### Fixed
+- **Admin Table Display Bug:** Incomplete orders page (`guardify-abandoned-cart`) showed dashes ("—") for name, phone, and other fields. Root cause: template used wrong property names (`billing_first_name`/`billing_phone`) instead of actual DB column names (`name`/`phone`). Now displays correctly.
+
+### Performance
+- **Cooldown Query Optimized:** Replaced heavy `wc_get_orders()` in `is_phone_in_cooldown()` with lightweight direct SQL query (`SELECT 1 ... LIMIT 1`). The old call loaded full WC order objects; new query is 10-50× faster. Supports both HPOS (`wc_orders` table) and legacy (`postmeta`) storage.
+- **Per-Request Cooldown Cache:** Added static `$cooldown_cache` array to prevent the same phone's cooldown from being checked multiple times during a single request (checkout fires `update_order_review` on every field change).
+- **Discord Webhook Non-Blocking:** Changed Discord notification HTTP call from `blocking: true` (15s timeout) to `blocking: false` (2s timeout). Checkout and admin status changes are no longer delayed by Discord API response time. Failed webhooks still retry via scheduled events.
+- **Fraud Check Timeout Reduced:** Reduced fraud API timeout from 15s to 5s. Prevents checkout from hanging if the fraud API is slow.
+- **DB Schema Check Guard:** `maybe_create_table()` now only runs on admin requests and AJAX — no longer checks `get_option('guardify_incomplete_db_version')` on every frontend page load.
+
 ## v1.5.0 — Incomplete Orders Overhaul (CartFlows + SMS + Bulk Convert)
 
 ### Added

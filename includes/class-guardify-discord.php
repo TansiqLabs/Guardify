@@ -1135,12 +1135,12 @@ class Guardify_Discord {
             return false;
         }
 
-        // Use blocking request to ensure delivery
+        // Use non-blocking request to avoid slowing down checkout/admin
         $response = wp_remote_post($webhook_url, [
-            'timeout'     => 15,
+            'timeout'     => 2,
             'headers'     => ['Content-Type' => 'application/json'],
             'body'        => $json_body,
-            'blocking'    => true,
+            'blocking'    => false,
             'sslverify'   => true,
             'data_format' => 'body',
         ]);
