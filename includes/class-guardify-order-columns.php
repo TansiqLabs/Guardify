@@ -233,7 +233,7 @@ class Guardify_Order_Columns {
         
         // Check if courier data is present
         $has_courier_data = ($stats['courier_delivered'] > 0 || $stats['courier_returned'] > 0);
-        $courier_tooltip = $has_courier_data ? __('Includes courier delivery data (Steadfast)', 'guardify') : __('Based on WooCommerce order statuses only', 'guardify');
+        $courier_tooltip = $has_courier_data ? __('Includes courier delivery data (Steadfast + Pathao)', 'guardify') : __('Based on WooCommerce order statuses only', 'guardify');
         
         ?>
         <div class="guardify-score-wrap" title="<?php echo esc_attr($courier_tooltip); ?>">
@@ -241,7 +241,7 @@ class Guardify_Order_Columns {
                 <span class="score-value"><?php echo esc_html($stats['total']); ?></span>
                 <span class="score-label"><?php _e('TOTAL', 'guardify'); ?></span>
             </span>
-            <span class="guardify-score-item guardify-score-delivered" title="<?php echo esc_attr(sprintf(__('Delivered Orders (%s)', 'guardify'), $has_courier_data ? 'Courier' : 'WC')); ?>">
+            <span class="guardify-score-item guardify-score-delivered" title="<?php echo esc_attr(sprintf(__('Delivered Orders (%s)', 'guardify'), $has_courier_data ? 'Courier: Steadfast+Pathao' : 'WC')); ?>">
                 <span class="score-value"><?php echo esc_html($stats['delivered']); ?></span>
                 <span class="score-label"><?php _e('DELIVERED', 'guardify'); ?></span>
             </span>
@@ -420,17 +420,30 @@ class Guardify_Order_Columns {
                     $stats['cancelled'] = (int) $row->cancelled;
                 }
                 
-                // Single query for courier stats — replaces 2 separate queries
+                // Single query for courier stats — Steadfast + Pathao combined
+                // Steadfast statuses: delivered, delivered_approval_pending, partial_delivered, partial_delivered_approval_pending, cancelled, cancelled_approval_pending
+                // Pathao statuses:    Delivered, Partial_Delivery, Return, Delivery_Failed, Pickup_Cancelled
+                // Also reads stdf_delivery_status from the official SteadFast API plugin (same status values as Steadfast)
                 $courier_rows = $wpdb->get_results($wpdb->prepare(
                     "SELECT 
-                        SUM(CASE WHEN m.meta_value IN ('delivered', 'delivered_approval_pending', 'partial_delivered', 'partial_delivered_approval_pending') THEN 1 ELSE 0 END) as courier_delivered,
-                        SUM(CASE WHEN m.meta_value IN ('cancelled', 'cancelled_approval_pending') THEN 1 ELSE 0 END) as courier_returned
+                        SUM(CASE 
+                            WHEN m.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
+                                 AND m.meta_value IN ('delivered','delivered_approval_pending','partial_delivered','partial_delivered_approval_pending') THEN 1
+                            WHEN m.meta_key = '_guardify_pathao_delivery_status' 
+                                 AND m.meta_value IN ('Delivered','Partial_Delivery') THEN 1
+                            ELSE 0 END) as courier_delivered,
+                        SUM(CASE 
+                            WHEN m.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
+                                 AND m.meta_value IN ('cancelled','cancelled_approval_pending') THEN 1
+                            WHEN m.meta_key = '_guardify_pathao_delivery_status' 
+                                 AND m.meta_value IN ('Return','Delivery_Failed','Pickup_Cancelled') THEN 1
+                            ELSE 0 END) as courier_returned
                     FROM {$orders_table} o
                     INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
                     INNER JOIN {$meta_table} m ON o.id = m.order_id
                     WHERE a.phone {$phone_clause}
                     AND o.status NOT IN ('trash')
-                    AND m.meta_key = '_guardify_steadfast_delivery_status'",
+                    AND m.meta_key IN ('_guardify_steadfast_delivery_status', '_guardify_pathao_delivery_status', 'stdf_delivery_status')",
                     ...$phone_params
                 ));
                 
@@ -463,11 +476,21 @@ class Guardify_Order_Columns {
                     $stats['cancelled'] = (int) $row->cancelled;
                 }
                 
-                // Legacy courier stats — single query
+                // Legacy courier stats — Steadfast + Pathao combined (also reads official SteadFast API plugin meta)
                 $courier_row = $wpdb->get_row($wpdb->prepare(
                     "SELECT 
-                        SUM(CASE WHEN pm2.meta_value IN ('delivered', 'delivered_approval_pending', 'partial_delivered', 'partial_delivered_approval_pending') THEN 1 ELSE 0 END) as courier_delivered,
-                        SUM(CASE WHEN pm2.meta_value IN ('cancelled', 'cancelled_approval_pending') THEN 1 ELSE 0 END) as courier_returned
+                        SUM(CASE 
+                            WHEN pm2.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
+                                 AND pm2.meta_value IN ('delivered','delivered_approval_pending','partial_delivered','partial_delivered_approval_pending') THEN 1
+                            WHEN pm2.meta_key = '_guardify_pathao_delivery_status' 
+                                 AND pm2.meta_value IN ('Delivered','Partial_Delivery') THEN 1
+                            ELSE 0 END) as courier_delivered,
+                        SUM(CASE 
+                            WHEN pm2.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
+                                 AND pm2.meta_value IN ('cancelled','cancelled_approval_pending') THEN 1
+                            WHEN pm2.meta_key = '_guardify_pathao_delivery_status' 
+                                 AND pm2.meta_value IN ('Return','Delivery_Failed','Pickup_Cancelled') THEN 1
+                            ELSE 0 END) as courier_returned
                     FROM {$wpdb->postmeta} pm
                     JOIN {$wpdb->posts} p ON pm.post_id = p.ID
                     JOIN {$wpdb->postmeta} pm2 ON pm.post_id = pm2.post_id
@@ -475,7 +498,7 @@ class Guardify_Order_Columns {
                     AND pm.meta_value {$phone_clause}
                     AND p.post_type = 'shop_order'
                     AND p.post_status NOT IN ('trash')
-                    AND pm2.meta_key = '_guardify_steadfast_delivery_status'",
+                    AND pm2.meta_key IN ('_guardify_steadfast_delivery_status', '_guardify_pathao_delivery_status', 'stdf_delivery_status')",
                     ...$phone_params
                 ));
                 

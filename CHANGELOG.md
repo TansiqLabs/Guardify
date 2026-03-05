@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.2 — Multi-Courier Score (2026-03-05)
+
+### Improved
+- **Score Column: Pathao Courier Data** — Customer score on WC orders page now includes Pathao delivery data alongside Steadfast. Previously only `_guardify_steadfast_delivery_status` was queried; now also reads `_guardify_pathao_delivery_status` with Pathao-specific status mapping (`Delivered`, `Partial_Delivery`, `Return`, `Delivery_Failed`, `Pickup_Cancelled`).
+- **Score Column: Official Steadfast Plugin Compatibility** — Also reads `stdf_delivery_status` meta from the official “SteadFast API” WordPress plugin (v1.0.6 by SteadFast Courier LTD). Courier data from both Guardify’s built-in integration and the official plugin are now aggregated in the score.
+- **Tooltip Updated** — Score tooltip now shows “Steadfast + Pathao” instead of just “Steadfast”.
+
 ## v1.5.1 — Bug Fix + Performance (2026-03-05)
 
 ### Fixed
