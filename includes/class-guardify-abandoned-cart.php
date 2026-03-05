@@ -28,7 +28,7 @@ class Guardify_Abandoned_Cart {
     private string $table_name;
 
     /** DB version for schema upgrades */
-    private const DB_VERSION = '1.0';
+    private const DB_VERSION = '1.1';
 
     // =========================================================================
     // SINGLETON + CONSTRUCTOR
@@ -70,6 +70,9 @@ class Guardify_Abandoned_Cart {
         add_action('wp_ajax_guardify_bulk_delete_incomplete', [$this, 'ajax_bulk_delete_incomplete']);
         add_action('wp_ajax_guardify_export_incomplete', [$this, 'ajax_export_incomplete']);
         add_action('wp_ajax_guardify_convert_to_order', [$this, 'ajax_convert_to_order']);
+        add_action('wp_ajax_guardify_bulk_convert_to_order', [$this, 'ajax_bulk_convert_to_order']);
+        add_action('wp_ajax_guardify_send_sms_incomplete', [$this, 'ajax_send_sms_incomplete']);
+        add_action('wp_ajax_guardify_bulk_send_sms', [$this, 'ajax_bulk_send_sms']);
 
         // ─── Scheduled cleanup ───
         if (!wp_next_scheduled('guardify_cleanup_incomplete_orders')) {
@@ -102,6 +105,7 @@ class Guardify_Abandoned_Cart {
         $sql = "CREATE TABLE {$this->table_name} (
             id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             name        VARCHAR(255)    NULL,
+            last_name   VARCHAR(255)    NULL,
             phone       VARCHAR(30)     NOT NULL DEFAULT '',
             email       VARCHAR(255)    NULL,
             address     TEXT            NULL,
@@ -196,6 +200,25 @@ class Guardify_Abandoned_Cart {
     public function capture_on_review_update($post_data): void {
         parse_str($post_data, $data);
 
+        // CartFlows sometimes prefixes field names differently
+        // Normalize any wcf- prefixed fields to standard billing_ names
+        $field_mappings = [
+            'wcf-billing-first-name' => 'billing_first_name',
+            'wcf-billing-last-name'  => 'billing_last_name',
+            'wcf-billing-phone'      => 'billing_phone',
+            'wcf-billing-email'      => 'billing_email',
+            'wcf-billing-address-1'  => 'billing_address_1',
+            'wcf-billing-city'       => 'billing_city',
+            'wcf-billing-state'      => 'billing_state',
+            'wcf-billing-country'    => 'billing_country',
+            'wcf-billing-postcode'   => 'billing_postcode',
+        ];
+        foreach ($field_mappings as $wcf_key => $woo_key) {
+            if (isset($data[$wcf_key]) && !isset($data[$woo_key])) {
+                $data[$woo_key] = $data[$wcf_key];
+            }
+        }
+
         $phone = $this->extract_phone($data);
         if (!$phone) {
             return; // No valid phone → skip
@@ -271,6 +294,10 @@ class Guardify_Abandoned_Cart {
             if ($name) {
                 $update['name'] = $name;
             }
+            $last_name = $this->sanitize_field($data, 'billing_last_name');
+            if ($last_name) {
+                $update['last_name'] = $last_name;
+            }
             $email = $this->sanitize_field($data, 'billing_email');
             if ($email && is_email($email)) {
                 $update['email'] = sanitize_email($email);
@@ -313,6 +340,7 @@ class Guardify_Abandoned_Cart {
         // ─── Insert new entry ───
         $insert_data = [
             'name'       => $this->sanitize_field($data, 'billing_first_name'),
+            'last_name'  => $this->sanitize_field($data, 'billing_last_name'),
             'phone'      => $phone,
             'email'      => is_email($this->sanitize_field($data, 'billing_email') ?: '') ? sanitize_email($data['billing_email']) : '',
             'address'    => $this->sanitize_field($data, 'billing_address_1'),
@@ -715,7 +743,7 @@ class Guardify_Abandoned_Cart {
 
         $out = fopen('php://output', 'w');
         // Header row
-        fputcsv($out, ['ID', 'Name', 'Phone', 'Email', 'Address', 'City', 'State', 'Country', 'Postcode', 'Products', 'Total', 'Date', 'Status']);
+        fputcsv($out, ['ID', 'First Name', 'Last Name', 'Phone', 'Email', 'Address', 'City', 'State', 'Country', 'Postcode', 'Products', 'Total', 'Date', 'Status']);
 
         foreach ($rows as $row) {
             $cart = json_decode($row['cart_data'], true);
@@ -735,6 +763,7 @@ class Guardify_Abandoned_Cart {
             fputcsv($out, [
                 $row['id'],
                 $row['name'],
+                $row['last_name'] ?? '',
                 $row['phone'],
                 $row['email'],
                 $row['address'],
@@ -815,6 +844,7 @@ class Guardify_Abandoned_Cart {
             // Set billing / shipping
             $billing = [
                 'first_name' => $row['name'] ?: 'Guest',
+                'last_name'  => $row['last_name'] ?? '',
                 'phone'      => $row['phone'],
                 'email'      => $row['email'] ?: '',
                 'address_1'  => $row['address'] ?: '',
@@ -910,5 +940,258 @@ class Guardify_Abandoned_Cart {
             return __('just now', 'guardify');
         }
         return human_time_diff($time, $now) . ' ' . __('ago', 'guardify');
+    }
+
+    /**
+     * Build full display name from first + last name.
+     */
+    public function get_full_name($row): string {
+        $first = is_object($row) ? ($row->name ?? '') : ($row['name'] ?? '');
+        $last = is_object($row) ? ($row->last_name ?? '') : ($row['last_name'] ?? '');
+        $full = trim($first . ' ' . $last);
+        return $full ?: __('Guest', 'guardify');
+    }
+
+    // =========================================================================
+    // ADMIN: AJAX — Bulk Convert to WooCommerce Orders
+    // =========================================================================
+
+    public function ajax_bulk_convert_to_order(): void {
+        check_ajax_referer('guardify-incomplete-nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+
+        $ids = isset($_POST['ids']) ? array_map('intval', (array) $_POST['ids']) : [];
+        $status = sanitize_text_field($_POST['status'] ?? 'pending');
+        $valid_statuses = ['pending', 'processing', 'completed', 'on-hold'];
+        if (!in_array($status, $valid_statuses, true)) {
+            $status = 'pending';
+        }
+
+        if (empty($ids)) {
+            wp_send_json_error(['message' => 'No IDs provided']);
+            return;
+        }
+
+        global $wpdb;
+        $created = 0;
+        $errors = [];
+
+        foreach ($ids as $id) {
+            $row = $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM {$this->table_name} WHERE id = %d", $id),
+                ARRAY_A
+            );
+
+            if (!$row) {
+                $errors[] = "ID {$id}: Record not found";
+                continue;
+            }
+
+            $cart = json_decode($row['cart_data'], true);
+            if (empty($cart) || !is_array($cart)) {
+                $errors[] = "ID {$id}: No cart data";
+                continue;
+            }
+
+            try {
+                $order = wc_create_order();
+
+                foreach ($cart as $item) {
+                    $product_id = (int) ($item['product_id'] ?? 0);
+                    $variation_id = (int) ($item['variation_id'] ?? 0);
+                    $quantity = max(1, (int) ($item['quantity'] ?? 1));
+
+                    $product = $variation_id > 0 ? wc_get_product($variation_id) : wc_get_product($product_id);
+                    if (!$product) {
+                        $product = wc_get_product($product_id);
+                    }
+                    if ($product) {
+                        $order->add_product($product, $quantity);
+                    }
+                }
+
+                $billing = [
+                    'first_name' => $row['name'] ?: 'Guest',
+                    'last_name'  => $row['last_name'] ?? '',
+                    'phone'      => $row['phone'],
+                    'email'      => $row['email'] ?: '',
+                    'address_1'  => $row['address'] ?: '',
+                    'city'       => $row['city'] ?: '',
+                    'state'      => $row['state'] ?: '',
+                    'country'    => $row['country'] ?: 'BD',
+                    'postcode'   => $row['postcode'] ?: '',
+                ];
+                $order->set_address($billing, 'billing');
+                $order->set_address($billing, 'shipping');
+
+                $order->set_payment_method('cod');
+                $order->calculate_totals();
+                $order->set_status($status);
+                $order->save();
+
+                $wpdb->update(
+                    $this->table_name,
+                    ['status' => 'recovered'],
+                    ['id' => $id],
+                    ['%s'],
+                    ['%d']
+                );
+
+                $created++;
+            } catch (\Exception $e) {
+                $errors[] = "ID {$id}: " . $e->getMessage();
+            }
+        }
+
+        wp_send_json_success([
+            'message' => sprintf('%d order(s) created', $created),
+            'created' => $created,
+            'errors'  => $errors,
+        ]);
+    }
+
+    // =========================================================================
+    // ADMIN: AJAX — Send SMS to Incomplete Order Customer
+    // =========================================================================
+
+    public function ajax_send_sms_incomplete(): void {
+        check_ajax_referer('guardify-incomplete-nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+
+        $id = (int) ($_POST['id'] ?? 0);
+        $message = sanitize_textarea_field($_POST['message'] ?? '');
+
+        if (!$id || empty($message)) {
+            wp_send_json_error(['message' => 'ID and message are required']);
+            return;
+        }
+
+        global $wpdb;
+        $row = $wpdb->get_row(
+            $wpdb->prepare("SELECT phone, name, last_name FROM {$this->table_name} WHERE id = %d", $id),
+            ARRAY_A
+        );
+
+        if (!$row || empty($row['phone'])) {
+            wp_send_json_error(['message' => 'Record not found or no phone']);
+            return;
+        }
+
+        // Replace placeholders in message
+        $full_name = $this->get_full_name($row);
+        $message = str_replace(
+            ['{name}', '{first_name}', '{last_name}', '{phone}'],
+            [$full_name, $row['name'] ?? 'Customer', $row['last_name'] ?? '', $row['phone']],
+            $message
+        );
+
+        $result = $this->send_sms($row['phone'], $message);
+
+        if ($result) {
+            wp_send_json_success(['message' => 'SMS sent to ' . $row['phone']]);
+        } else {
+            wp_send_json_error(['message' => 'Failed to send SMS']);
+        }
+    }
+
+    public function ajax_bulk_send_sms(): void {
+        check_ajax_referer('guardify-incomplete-nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Permission denied']);
+        }
+
+        $ids = isset($_POST['ids']) ? array_map('intval', (array) $_POST['ids']) : [];
+        $message = sanitize_textarea_field($_POST['message'] ?? '');
+
+        if (empty($ids) || empty($message)) {
+            wp_send_json_error(['message' => 'IDs and message are required']);
+            return;
+        }
+
+        global $wpdb;
+        $sent = 0;
+        $failed = 0;
+
+        foreach ($ids as $id) {
+            $row = $wpdb->get_row(
+                $wpdb->prepare("SELECT phone, name, last_name FROM {$this->table_name} WHERE id = %d", $id),
+                ARRAY_A
+            );
+
+            if (!$row || empty($row['phone'])) {
+                $failed++;
+                continue;
+            }
+
+            $full_name = $this->get_full_name($row);
+            $personalized = str_replace(
+                ['{name}', '{first_name}', '{last_name}', '{phone}'],
+                [$full_name, $row['name'] ?? 'Customer', $row['last_name'] ?? '', $row['phone']],
+                $message
+            );
+
+            if ($this->send_sms($row['phone'], $personalized)) {
+                $sent++;
+            } else {
+                $failed++;
+            }
+
+            // Rate limit: 100ms delay between SMS
+            usleep(100000);
+        }
+
+        wp_send_json_success([
+            'message' => sprintf('%d SMS sent, %d failed', $sent, $failed),
+            'sent'    => $sent,
+            'failed'  => $failed,
+        ]);
+    }
+
+    /**
+     * Send SMS via configured gateway.
+     * Uses the filter 'guardify_send_sms' to allow external SMS providers.
+     * Falls back to Guardify settings SMS API if no filter handles it.
+     */
+    private function send_sms(string $phone, string $message): bool {
+        // Allow external SMS handlers via filter
+        $result = apply_filters('guardify_send_sms', null, $phone, $message);
+        if ($result !== null) {
+            return (bool) $result;
+        }
+
+        // Built-in: Use Guardify SMS settings
+        $api_key = get_option('guardify_sms_api_key', '');
+        $sender_id = get_option('guardify_sms_sender_id', '');
+        $api_url = get_option('guardify_sms_api_url', '');
+
+        if (empty($api_key) || empty($api_url)) {
+            return false;
+        }
+
+        $response = wp_remote_post($api_url, [
+            'timeout' => 15,
+            'body'    => [
+                'api_key'   => $api_key,
+                'senderid'  => $sender_id,
+                'number'    => $phone,
+                'message'   => $message,
+                'type'      => 'text',
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            error_log('Guardify SMS failed: ' . $response->get_error_message());
+            return false;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        return $code >= 200 && $code < 300;
     }
 }

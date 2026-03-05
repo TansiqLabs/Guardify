@@ -1,4 +1,34 @@
 # Changelog
+## v1.5.0 — Incomplete Orders Overhaul (CartFlows + SMS + Bulk Convert)
+
+### Added
+- **Full CartFlows / FunnelKit Compatibility:** Incomplete order capture now works perfectly with CartFlows custom checkout pages. New `getFieldValue()` uses 5-level fallback selector strategy: standard WC IDs → `name` attributes → CartFlows wrapper (`#wcf-*`) → Block Checkout (`data-checkout-field`) → Fluid Checkout (`.fc-*`).
+- **WooCommerce Block Checkout Support:** Detects and captures from the new WooCommerce Block-based checkout (`wc-block-checkout`).
+- **FluidCheckout & CheckoutWC Support:** Additional checkout builder detection and field capture.
+- **Last Name Capture:** Added `billing_last_name` collection — DB schema upgraded to v1.1 with `last_name` column. Convert-to-order now properly sets separate first/last name on WC orders.
+- **Multi-Capture (No More One-Shot):** Frontend now uses data-hash comparison instead of `stored=true` one-shot flag. Allows up to 5 re-captures per page load when customer data changes (e.g., fills phone first, then name later).
+- **SMS Sending:** New `ajax_send_sms_incomplete` action — send recovery SMS to individual incomplete order customers with personalized placeholders (`{name}`, `{first_name}`, `{last_name}`, `{phone}`).
+- **Bulk SMS:** New `ajax_bulk_send_sms` action — send SMS to multiple customers at once with 100ms rate limiting between messages.
+- **Bulk Convert to WC Orders:** New `ajax_bulk_convert_to_order` action — convert multiple incomplete orders to WooCommerce orders in one click.
+- **SMS Gateway Integration:** New `send_sms()` method with `guardify_send_sms` filter hook for custom SMS providers, plus built-in API support via Guardify SMS settings.
+- **`get_full_name()` Helper:** Properly combines first + last name across the plugin.
+
+### Fixed
+- **CartFlows Name/Phone Not Captured:** CartFlows sometimes uses different field name formats (`wcf-billing-first-name` vs `billing_first_name`). Added field mapping normalization in `capture_on_review_update()`.
+- **Customer Name Incomplete:** Previously only stored `billing_first_name` as `name`. Now stores both first and last name separately for proper display.
+- **Data Updates Blocked After First Capture:** Old one-shot `stored=true` prevented further data collection if customer continued filling the form. Now tracks data hash and allows re-capture when data actually changes.
+- **CartFlows Form Submit Not Detected:** Added `wcf_checkout_place_order` event listener to prevent false-positive captures during CartFlows form submission.
+
+### Technical
+- DB schema version bumped from 1.0 to 1.1 (auto-upgrade via `dbDelta`).
+- Added `last_name VARCHAR(255) NULL` column to `guardify_incomplete_orders` table.
+- CSV export now includes separate "First Name" and "Last Name" columns.
+- Three new AJAX actions registered: `guardify_bulk_convert_to_order`, `guardify_send_sms_incomplete`, `guardify_bulk_send_sms`.
+- Document-level event listeners for dynamically loaded forms (CartFlows AJAX page transitions).
+- `abandoned-cart.js` fully rewritten (v1.3.0 → v1.5.0).
+
+---
+
 ## v1.4.0 — Critical Bug Fixes & Blocklist Enforcement
 
 ### Fixed
