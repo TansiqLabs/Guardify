@@ -1206,7 +1206,7 @@ class Guardify_Discord {
      * Fetch fraud score from TansiqLabs API for Discord notification
      */
     private function fetch_fraud_score_for_discord(string $phone): ?array {
-        $api_key = get_option('guardify_site_api_key', '');
+        $api_key = get_option('guardify_api_key', '');
         if (empty($api_key)) {
             $api_key = get_option('guardify_api_key', '');
         }

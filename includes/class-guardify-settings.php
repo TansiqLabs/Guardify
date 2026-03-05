@@ -1768,9 +1768,11 @@ class Guardify_Settings {
             update_option('guardify_license_last_check', gmdate('Y-m-d H:i:s'));
             update_option('guardify_license_validation_failures', 0);
             
-            // Auto-store the site API key for log ingestion (merged key system)
+            // Merged key system: store the site API key as the primary key.
+            // This overwrites the license key — guardify_api_key is the single key
+            // used for both connection validation and API authentication.
             if (!empty($data['site_api_key'])) {
-                update_option('guardify_site_api_key', sanitize_text_field($data['site_api_key']));
+                update_option('guardify_api_key', sanitize_text_field($data['site_api_key']));
             }
             
             // Ensure the daily cron is scheduled for periodic validation
@@ -1833,7 +1835,6 @@ class Guardify_Settings {
         
         // Clear local license data regardless of API response
         delete_option('guardify_api_key');
-        delete_option('guardify_site_api_key');
         delete_option('guardify_license_status');
         delete_option('guardify_license_expiry');
         delete_option('guardify_license_plan');
@@ -1904,8 +1905,9 @@ class Guardify_Settings {
             update_option('guardify_license_features', $data['license']['features'] ?? array());
             update_option('guardify_license_last_check', gmdate('Y-m-d H:i:s'));
             update_option('guardify_license_validation_failures', 0);
+            // Merged key: store site API key as the primary key used for all API auth
             if (!empty($data['site_api_key'])) {
-                update_option('guardify_site_api_key', sanitize_text_field($data['site_api_key']));
+                update_option('guardify_api_key', sanitize_text_field($data['site_api_key']));
             }
             if (!wp_next_scheduled('guardify_daily_cleanup')) {
                 wp_schedule_event(time(), 'daily', 'guardify_daily_cleanup');
@@ -1967,7 +1969,7 @@ class Guardify_Settings {
         }
 
         $token = sanitize_text_field(wp_unslash($_GET['guardify_sso']));
-        $api_key = get_option('guardify_site_api_key', '');
+        $api_key = get_option('guardify_api_key', '');
 
         if (empty($api_key)) {
             wp_die(
@@ -2094,9 +2096,9 @@ class Guardify_Settings {
             update_option('guardify_license_features', $data['license']['features'] ?? array());
             update_option('guardify_license_last_check', gmdate('Y-m-d H:i:s'));
             
-            // Sync site API key (merged key system)
+            // Merged key: sync site API key as the primary key
             if (!empty($data['site_api_key'])) {
-                update_option('guardify_site_api_key', sanitize_text_field($data['site_api_key']));
+                update_option('guardify_api_key', sanitize_text_field($data['site_api_key']));
             }
             
             // Sync Steadfast enabled/disabled status — credentials stay on TansiqLabs server

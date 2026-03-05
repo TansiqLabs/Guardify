@@ -89,7 +89,7 @@ class Guardify_Pathao {
      * Get site API key (used to authenticate with TansiqLabs courier proxy)
      */
     private function get_site_api_key(): string {
-        return get_option('guardify_site_api_key', '');
+        return get_option('guardify_api_key', '');
     }
 
     /**

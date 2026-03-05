@@ -269,13 +269,10 @@ class Guardify_Fraud_Check {
     }
 
     private function fetch_fraud_score(string $phone): ?array {
-        $api_key = get_option('guardify_site_api_key', '');
-        if (empty($api_key)) {
-            $api_key = get_option('guardify_api_key', '');
-        }
+        $api_key = get_option('guardify_api_key', '');
 
         $response = wp_remote_post(self::API_ENDPOINT, [
-            'timeout'     => 5,
+            'timeout'     => 15,
             'headers'     => ['Content-Type' => 'application/json'],
             'body'        => wp_json_encode([
                 'api_key' => $api_key,
@@ -389,8 +386,8 @@ class Guardify_Fraud_Check {
             wp_send_json_error(['message' => 'No phone numbers provided']);
         }
 
-        // Limit to 25 phones per batch to prevent timeout
-        $phones = array_slice(array_unique($phones), 0, 25);
+        // Limit to 10 phones per batch to prevent courier API rate limiting
+        $phones = array_slice(array_unique($phones), 0, 10);
         $results = [];
 
         foreach ($phones as $phone) {

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.5 — Single API Key + API Caching (2026-03-05)
+
+### Changed
+- **Single API Key System:** Consolidated `guardify_api_key`, `guardify_license_key`, and `guardify_site_api_key` into a single `guardify_api_key` option. After license activation or SSO, the site API key overwrites the license key — one key for both console connection and API authentication. No more confusion between license key and site API key.
+- **API Timeout Increase:** Increased `wp_remote_post` timeout from 5s to 15s for fraud-check API calls to handle slow network conditions.
+- **Reduced Batch Size:** Lowered max batch size from 25 to 10 phones per request to prevent Steadfast/Pathao courier API rate limiting.
+- **Server-Side Courier Cache:** Added 6-hour in-memory caching on the TansiqLabs API server for Steadfast and Pathao courier data. Repeated fraud-check requests for the same phone number serve cached results instead of hitting external courier APIs — prevents rate limiting and improves response time.
+
 ## v1.5.4 — Auto-Load Global Courier Data (2026-03-05)
 
 ### Changed
