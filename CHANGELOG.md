@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.6 — Bugfixes & Miscellaneous (2026-03-07)
+
+### Changed
+- Bumped plugin version to 1.5.6 for release; no functional changes since 1.5.5.
+
 ## v1.5.5 — Single API Key + API Caching (2026-03-05)
 
 ### Changed
