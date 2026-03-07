@@ -337,30 +337,47 @@ jQuery(document).ready(function($) {
     });
 
     // ==========================================
-    // AUTO-LOAD GLOBAL COURIER DATA (Score Column)
+    // AUTO-LOAD GLOBAL COURIER DATA (Courier Report Column)
     // Runs after page paint — no manual button needed
     // ==========================================
-    function updateScoreWrap($wrap, c) {
-        $wrap.find('.guardify-score-total .score-value').text(c.totalParcels || 0);
-        $wrap.find('.guardify-score-total .score-label').html('🌐 TOTAL');
-        $wrap.find('.guardify-score-delivered .score-value').text(c.totalDelivered || 0);
-        $wrap.find('.guardify-score-returned .score-value').text(c.totalCancelled || 0);
-        $wrap.find('.guardify-score-success .score-value').text((c.successRate || 0) + '%');
-
-        var $success = $wrap.find('.guardify-score-success');
-        $success.removeClass('success-low success-medium success-high');
-        if (c.successRate >= 80) $success.addClass('success-high');
-        else if (c.successRate >= 50) $success.addClass('success-medium');
-        else $success.addClass('success-low');
-
-        $wrap.attr('title', 'Global courier data (Steadfast + Pathao) via Guardify Network');
-        $wrap.removeAttr('data-needs-global');
+    function updateCourierWrap($wrap, c) {
+        // Replace loading state with stats
+        $wrap.find('.guardify-courier-loading').remove();
+        
+        var statsHtml = '<div class="guardify-courier-stats">' +
+            '<span class="guardify-courier-item guardify-courier-total">' +
+                '<span class="courier-value">' + (c.totalParcels || 0) + '</span>' +
+                '<span class="courier-label">📦 PARCELS</span>' +
+            '</span>' +
+            '<span class="guardify-courier-item guardify-courier-delivered">' +
+                '<span class="courier-value">' + (c.totalDelivered || 0) + '</span>' +
+                '<span class="courier-label">✅ DELIVERED</span>' +
+            '</span>' +
+            '<span class="guardify-courier-item guardify-courier-cancelled">' +
+                '<span class="courier-value">' + (c.totalCancelled || 0) + '</span>' +
+                '<span class="courier-label">❌ CANCELLED</span>' +
+            '</span>' +
+            '<span class="guardify-courier-item guardify-courier-success ' + getCourierSuccessClass(c.successRate) + '">' +
+                '<span class="courier-value">' + (c.successRate || 0) + '%</span>' +
+                '<span class="courier-label">🌐 SUCCESS</span>' +
+            '</span>' +
+        '</div>';
+        
+        // Insert stats before the fraud check link
+        $wrap.find('.guardify-courier-link').before(statsHtml);
+        $wrap.removeAttr('data-needs-courier');
     }
 
-    // Auto-fetch after page paint: collect all phones needing global data, batch fetch
+    function getCourierSuccessClass(rate) {
+        if (rate >= 80) return 'courier-success-high';
+        if (rate >= 50) return 'courier-success-medium';
+        return 'courier-success-low';
+    }
+
+    // Auto-fetch after page paint: collect all phones needing courier data, batch fetch
     setTimeout(function() {
         var phones = {};
-        $('.guardify-score-wrap[data-needs-global="1"]').each(function() {
+        $('.guardify-courier-wrap[data-needs-courier="1"]').each(function() {
             var phone = $(this).attr('data-phone');
             if (phone) phones[phone] = true;
         });
@@ -368,7 +385,7 @@ jQuery(document).ready(function($) {
         var phoneList = Object.keys(phones);
         if (phoneList.length === 0) return;
 
-        console.log('Guardify: Auto-fetching global courier data for', phoneList.length, 'phone(s)');
+        console.log('Guardify: Auto-fetching courier data for', phoneList.length, 'phone(s)');
 
         $.post(guardifyOrderColumns.ajax_url, {
             action: 'guardify_batch_refresh_courier',
@@ -378,15 +395,15 @@ jQuery(document).ready(function($) {
             if (response.success && response.data) {
                 $.each(response.data, function(phone, courierData) {
                     if (!courierData || !courierData.totalParcels) return;
-                    // Update ALL Score columns with this phone number
-                    $('.guardify-score-wrap[data-phone="' + phone + '"]').each(function() {
-                        updateScoreWrap($(this), courierData);
+                    // Update ALL Courier Report columns with this phone number
+                    $('.guardify-courier-wrap[data-phone="' + phone + '"]').each(function() {
+                        updateCourierWrap($(this), courierData);
                     });
                 });
-                console.log('Guardify: Global courier data loaded for', Object.keys(response.data).length, 'phone(s)');
+                console.log('Guardify: Courier data loaded for', Object.keys(response.data).length, 'phone(s)');
             }
         }).fail(function() {
-            console.warn('Guardify: Failed to fetch global courier data');
+            console.warn('Guardify: Failed to fetch courier data');
         });
     }, 800); // 800ms delay ensures page is fully painted first
 

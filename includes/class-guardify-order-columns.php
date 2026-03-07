@@ -15,11 +15,6 @@ class Guardify_Order_Columns {
     private static ?self $instance = null;
     
     /**
-     * Cache for customer statistics
-     */
-    private array $stats_cache = array();
-
-    /**
      * Cached blocked lists (loaded once per page)
      */
     private ?array $blocked_phones_cache = null;
@@ -131,9 +126,9 @@ class Guardify_Order_Columns {
         foreach ($columns as $column_name => $column_info) {
             $new_columns[$column_name] = $column_info;
             
-            // Add Score and Duplicate after order_number
+            // Add Courier Report and Duplicate after order_number
             if ($column_name === 'order_number') {
-                $new_columns['guardify_score'] = __('Score', 'guardify');
+                $new_columns['guardify_courier_report'] = __('Courier Report', 'guardify');
                 $new_columns['guardify_duplicate'] = __('Duplicate?', 'guardify');
             }
             
@@ -187,8 +182,8 @@ class Guardify_Order_Columns {
         $phone = $order->get_billing_phone();
         
         switch ($column) {
-            case 'guardify_score':
-                $this->render_score_column($order, $phone);
+            case 'guardify_courier_report':
+                $this->render_courier_report_column($order, $phone);
                 break;
                 
             case 'guardify_duplicate':
@@ -202,72 +197,67 @@ class Guardify_Order_Columns {
     }
 
     /**
-     * Render Score column
-     * Shows: Total, Delivered, Returned, Success%
-     * Data sourced from WooCommerce statuses + all integrated couriers (Steadfast, etc.)
+     * Render Courier Report column
+     * Shows global courier data (Steadfast + Pathao) from TansiqLabs Fraud Check API.
+     * Links to the TansiqLabs fraud-check page for detailed analysis.
      */
-    private function render_score_column($order, string $phone): void {
+    private function render_courier_report_column($order, string $phone): void {
         if (empty($phone)) {
-            echo '<span class="guardify-score-na">—</span>';
+            echo '<span class="guardify-courier-na">—</span>';
             return;
         }
-        
-        $stats = $this->get_customer_stats($phone);
-        $has_global = !empty($stats['has_global']);
-        
-        // Success rate: delivered / total (excluding pending/processing which are still in transit)
-        $resolved_orders = $stats['delivered'] + $stats['returned'] + $stats['cancelled'];
-        $success_rate = $resolved_orders > 0 ? round(($stats['delivered'] / $resolved_orders) * 100, 1) : 0;
-        
-        // If global data available, prefer its success rate
-        if ($has_global && !empty($stats['global_success'])) {
-            $success_rate = (float) $stats['global_success'];
-        }
-        
-        // If no resolved orders but there are total orders, show 0% (all still pending)
-        if ($resolved_orders === 0 && $stats['total'] > 0) {
-            $success_rate = 0;
-        }
-        
-        // Determine color based on success rate
-        $success_class = 'success-low';
-        if ($success_rate >= 80) {
-            $success_class = 'success-high';
-        } elseif ($success_rate >= 50) {
-            $success_class = 'success-medium';
-        }
-        
-        // Data source indicator
-        $has_courier_data = ($stats['courier_delivered'] > 0 || $stats['courier_returned'] > 0);
-        if ($has_global) {
-            $courier_tooltip = __('Global courier data (Steadfast + Pathao) via Guardify Network', 'guardify');
-        } elseif ($has_courier_data) {
-            $courier_tooltip = __('Local courier data (Steadfast + Pathao)', 'guardify');
-        } else {
-            $courier_tooltip = __('Based on WooCommerce order statuses only', 'guardify');
+
+        // Check for cached global courier data from fraud-check API
+        $courier = null;
+        if (class_exists('Guardify_Fraud_Check')) {
+            $courier = Guardify_Fraud_Check::get_cached_courier_data($phone);
         }
 
-        // Use global total if available
-        $display_total = $has_global ? ($stats['global_total'] ?? $stats['total']) : $stats['total'];
-        
+        $has_data = $courier && !empty($courier['totalParcels']);
+        $total = $has_data ? intval($courier['totalParcels']) : 0;
+        $delivered = $has_data ? intval($courier['totalDelivered']) : 0;
+        $cancelled = $has_data ? intval($courier['totalCancelled']) : 0;
+        $success_rate = $has_data ? intval($courier['successRate']) : 0;
+
+        // Determine color based on success rate
+        $success_class = 'courier-success-low';
+        if ($has_data && $success_rate >= 80) {
+            $success_class = 'courier-success-high';
+        } elseif ($has_data && $success_rate >= 50) {
+            $success_class = 'courier-success-medium';
+        }
+
+        // Build fraud-check URL
+        $fraud_check_url = 'https://tansiqlabs.com/console/apps/guardify/fraud-check';
         ?>
-        <div class="guardify-score-wrap" title="<?php echo esc_attr($courier_tooltip); ?>" data-phone="<?php echo esc_attr($phone); ?>"<?php echo !$has_global ? ' data-needs-global="1"' : ''; ?>>
-            <span class="guardify-score-item guardify-score-total" title="<?php echo esc_attr($has_global ? __('Total Parcels (Global Network)', 'guardify') : __('Total Orders (This Store)', 'guardify')); ?>">
-                <span class="score-value"><?php echo esc_html($display_total); ?></span>
-                <span class="score-label"><?php echo $has_global ? '🌐 ' : ''; ?><?php _e('TOTAL', 'guardify'); ?></span>
-            </span>
-            <span class="guardify-score-item guardify-score-delivered" title="<?php echo esc_attr(sprintf(__('Delivered (%s)', 'guardify'), $has_global ? 'Global Network' : ($has_courier_data ? 'Courier: Steadfast+Pathao' : 'WC'))); ?>">
-                <span class="score-value"><?php echo esc_html($stats['delivered']); ?></span>
-                <span class="score-label"><?php _e('DELIVERED', 'guardify'); ?></span>
-            </span>
-            <span class="guardify-score-item guardify-score-returned" title="<?php echo esc_attr(sprintf(__('Returned/Cancelled (%d returned + %d cancelled)', 'guardify'), $stats['returned'], $stats['cancelled'])); ?>">
-                <span class="score-value"><?php echo esc_html($stats['returned'] + $stats['cancelled']); ?></span>
-                <span class="score-label"><?php _e('RETURNED', 'guardify'); ?></span>
-            </span>
-            <span class="guardify-score-item guardify-score-success <?php echo esc_attr($success_class); ?>" title="<?php echo esc_attr(sprintf(__('Success Rate: %s%%', 'guardify'), $success_rate)); ?>">
-                <span class="score-value"><?php echo esc_html($success_rate); ?>%</span>
-                <span class="score-label"><?php echo ($has_global ? '📦 ' : ($has_courier_data ? '📦 ' : '')); ?><?php _e('SUCCESS', 'guardify'); ?></span>
-            </span>
+        <div class="guardify-courier-wrap" data-phone="<?php echo esc_attr($phone); ?>"<?php echo !$has_data ? ' data-needs-courier="1"' : ''; ?> title="<?php esc_attr_e('Global courier data via Guardify Network (Steadfast + Pathao)', 'guardify'); ?>">
+            <?php if ($has_data): ?>
+                <div class="guardify-courier-stats">
+                    <span class="guardify-courier-item guardify-courier-total">
+                        <span class="courier-value"><?php echo esc_html($total); ?></span>
+                        <span class="courier-label">📦 <?php _e('PARCELS', 'guardify'); ?></span>
+                    </span>
+                    <span class="guardify-courier-item guardify-courier-delivered">
+                        <span class="courier-value"><?php echo esc_html($delivered); ?></span>
+                        <span class="courier-label">✅ <?php _e('DELIVERED', 'guardify'); ?></span>
+                    </span>
+                    <span class="guardify-courier-item guardify-courier-cancelled">
+                        <span class="courier-value"><?php echo esc_html($cancelled); ?></span>
+                        <span class="courier-label">❌ <?php _e('CANCELLED', 'guardify'); ?></span>
+                    </span>
+                    <span class="guardify-courier-item guardify-courier-success <?php echo esc_attr($success_class); ?>">
+                        <span class="courier-value"><?php echo esc_html($success_rate); ?>%</span>
+                        <span class="courier-label">🌐 <?php _e('SUCCESS', 'guardify'); ?></span>
+                    </span>
+                </div>
+            <?php else: ?>
+                <div class="guardify-courier-loading">
+                    <span class="guardify-courier-loading-text"><?php _e('Loading...', 'guardify'); ?></span>
+                </div>
+            <?php endif; ?>
+            <a href="<?php echo esc_url($fraud_check_url); ?>" target="_blank" rel="noopener" class="guardify-courier-link" title="<?php esc_attr_e('View full fraud report on TansiqLabs', 'guardify'); ?>">
+                🔍 <?php _e('Fraud Check', 'guardify'); ?>
+            </a>
         </div>
         <?php
     }
@@ -372,198 +362,6 @@ class Guardify_Order_Columns {
     }
 
     /**
-     * Get customer statistics by phone
-     * Combines WooCommerce order statuses AND courier delivery statuses (Steadfast, etc.)
-     * Score aggregates data from all integrated couriers
-     *
-     * Performance: Uses single SQL query with conditional aggregation instead of 6 separate queries.
-     * External API fallback removed from sync rendering — courier data fetched only from local DB.
-     */
-    private function get_customer_stats(string $phone): array {
-        if (empty($phone)) {
-            return array('total' => 0, 'delivered' => 0, 'returned' => 0, 'cancelled' => 0, 'courier_delivered' => 0, 'courier_returned' => 0);
-        }
-        
-        // Normalize phone for cache key
-        $cache_key = preg_replace('/\D/', '', $phone);
-        
-        // Check cache
-        if (isset($this->stats_cache[$cache_key])) {
-            return $this->stats_cache[$cache_key];
-        }
-        
-        // Build phone variants for fuzzy matching (handles 01..., +880..., 880..., etc.)
-        list($phone_clause, $phone_params) = $this->phone_in_clause($phone);
-        
-        global $wpdb;
-        
-        $stats = array(
-            'total' => 0,
-            'delivered' => 0,
-            'returned' => 0,
-            'cancelled' => 0,
-            'courier_delivered' => 0,
-            'courier_returned' => 0,
-        );
-        
-        try {
-            // Check for HPOS
-            if (class_exists('Automattic\WooCommerce\Utilities\OrderUtil') && 
-                \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled()) {
-                $orders_table = $wpdb->prefix . 'wc_orders';
-                $addresses_table = $wpdb->prefix . 'wc_order_addresses';
-                $meta_table = $wpdb->prefix . 'wc_orders_meta';
-                
-                // Single query with conditional aggregation — replaces 4 separate queries
-                $row = $wpdb->get_row($wpdb->prepare(
-                    "SELECT 
-                        COUNT(*) as total,
-                        SUM(CASE WHEN o.status IN ('wc-completed', 'completed') THEN 1 ELSE 0 END) as delivered,
-                        SUM(CASE WHEN o.status IN ('wc-refunded', 'refunded', 'wc-failed', 'failed') THEN 1 ELSE 0 END) as returned,
-                        SUM(CASE WHEN o.status IN ('wc-cancelled', 'cancelled') THEN 1 ELSE 0 END) as cancelled
-                    FROM {$orders_table} o
-                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                    WHERE a.phone {$phone_clause}
-                    AND o.status NOT IN ('trash')",
-                    ...$phone_params
-                ));
-                
-                if ($row) {
-                    $stats['total'] = (int) $row->total;
-                    $stats['delivered'] = (int) $row->delivered;
-                    $stats['returned'] = (int) $row->returned;
-                    $stats['cancelled'] = (int) $row->cancelled;
-                }
-                
-                // Single query for courier stats — Steadfast + Pathao combined
-                // Steadfast statuses: delivered, delivered_approval_pending, partial_delivered, partial_delivered_approval_pending, cancelled, cancelled_approval_pending
-                // Pathao statuses:    Delivered, Partial_Delivery, Return, Delivery_Failed, Pickup_Cancelled
-                // Also reads stdf_delivery_status from the official SteadFast API plugin (same status values as Steadfast)
-                $courier_rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT 
-                        SUM(CASE 
-                            WHEN m.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
-                                 AND m.meta_value IN ('delivered','delivered_approval_pending','partial_delivered','partial_delivered_approval_pending') THEN 1
-                            WHEN m.meta_key = '_guardify_pathao_delivery_status' 
-                                 AND m.meta_value IN ('Delivered','Partial_Delivery') THEN 1
-                            ELSE 0 END) as courier_delivered,
-                        SUM(CASE 
-                            WHEN m.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
-                                 AND m.meta_value IN ('cancelled','cancelled_approval_pending') THEN 1
-                            WHEN m.meta_key = '_guardify_pathao_delivery_status' 
-                                 AND m.meta_value IN ('Return','Delivery_Failed','Pickup_Cancelled') THEN 1
-                            ELSE 0 END) as courier_returned
-                    FROM {$orders_table} o
-                    INNER JOIN {$addresses_table} a ON o.id = a.order_id AND a.address_type = 'billing'
-                    INNER JOIN {$meta_table} m ON o.id = m.order_id
-                    WHERE a.phone {$phone_clause}
-                    AND o.status NOT IN ('trash')
-                    AND m.meta_key IN ('_guardify_steadfast_delivery_status', '_guardify_pathao_delivery_status', 'stdf_delivery_status')",
-                    ...$phone_params
-                ));
-                
-                if (!empty($courier_rows[0])) {
-                    $stats['courier_delivered'] = (int) $courier_rows[0]->courier_delivered;
-                    $stats['courier_returned'] = (int) $courier_rows[0]->courier_returned;
-                }
-                
-            } else {
-                // Legacy: single query with conditional aggregation
-                $row = $wpdb->get_row($wpdb->prepare(
-                    "SELECT 
-                        COUNT(*) as total,
-                        SUM(CASE WHEN p.post_status = 'wc-completed' THEN 1 ELSE 0 END) as delivered,
-                        SUM(CASE WHEN p.post_status IN ('wc-refunded', 'wc-failed') THEN 1 ELSE 0 END) as returned,
-                        SUM(CASE WHEN p.post_status = 'wc-cancelled' THEN 1 ELSE 0 END) as cancelled
-                    FROM {$wpdb->postmeta} pm
-                    JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-                    WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value {$phone_clause}
-                    AND p.post_type = 'shop_order'
-                    AND p.post_status NOT IN ('trash')",
-                    ...$phone_params
-                ));
-                
-                if ($row) {
-                    $stats['total'] = (int) $row->total;
-                    $stats['delivered'] = (int) $row->delivered;
-                    $stats['returned'] = (int) $row->returned;
-                    $stats['cancelled'] = (int) $row->cancelled;
-                }
-                
-                // Legacy courier stats — Steadfast + Pathao combined (also reads official SteadFast API plugin meta)
-                $courier_row = $wpdb->get_row($wpdb->prepare(
-                    "SELECT 
-                        SUM(CASE 
-                            WHEN pm2.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
-                                 AND pm2.meta_value IN ('delivered','delivered_approval_pending','partial_delivered','partial_delivered_approval_pending') THEN 1
-                            WHEN pm2.meta_key = '_guardify_pathao_delivery_status' 
-                                 AND pm2.meta_value IN ('Delivered','Partial_Delivery') THEN 1
-                            ELSE 0 END) as courier_delivered,
-                        SUM(CASE 
-                            WHEN pm2.meta_key IN ('_guardify_steadfast_delivery_status','stdf_delivery_status') 
-                                 AND pm2.meta_value IN ('cancelled','cancelled_approval_pending') THEN 1
-                            WHEN pm2.meta_key = '_guardify_pathao_delivery_status' 
-                                 AND pm2.meta_value IN ('Return','Delivery_Failed','Pickup_Cancelled') THEN 1
-                            ELSE 0 END) as courier_returned
-                    FROM {$wpdb->postmeta} pm
-                    JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-                    JOIN {$wpdb->postmeta} pm2 ON pm.post_id = pm2.post_id
-                    WHERE pm.meta_key = '_billing_phone'
-                    AND pm.meta_value {$phone_clause}
-                    AND p.post_type = 'shop_order'
-                    AND p.post_status NOT IN ('trash')
-                    AND pm2.meta_key IN ('_guardify_steadfast_delivery_status', '_guardify_pathao_delivery_status', 'stdf_delivery_status')",
-                    ...$phone_params
-                ));
-                
-                if ($courier_row) {
-                    $stats['courier_delivered'] = (int) $courier_row->courier_delivered;
-                    $stats['courier_returned'] = (int) $courier_row->courier_returned;
-                }
-            }
-            
-            // Merge courier stats: use courier data when available (higher accuracy)
-            if ($stats['courier_delivered'] > 0) {
-                $stats['delivered'] = max($stats['delivered'], $stats['courier_delivered']);
-            }
-            if ($stats['courier_returned'] > 0) {
-                $stats['returned'] = max($stats['returned'], $stats['courier_returned']);
-            }
-
-            // ── Overlay GLOBAL courier data from fraud-check API (if cached) ──
-            // The fraud-check API fetches delivery data from Steadfast + Pathao APIs directly,
-            // giving a cross-merchant/global view. This is much more comprehensive than
-            // local order meta which only has THIS store's data.
-            if (class_exists('Guardify_Fraud_Check')) {
-                $global_courier = Guardify_Fraud_Check::get_cached_courier_data($phone);
-                if ($global_courier && !empty($global_courier['totalParcels'])) {
-                    $stats['global_total']     = (int) ($global_courier['totalParcels'] ?? 0);
-                    $stats['global_delivered'] = (int) ($global_courier['totalDelivered'] ?? 0);
-                    $stats['global_cancelled'] = (int) ($global_courier['totalCancelled'] ?? 0);
-                    $stats['global_success']   = (int) ($global_courier['successRate'] ?? 0);
-                    $stats['has_global']       = true;
-
-                    // Use global data for delivered/returned if it has more data than local
-                    if ($stats['global_delivered'] > $stats['delivered']) {
-                        $stats['delivered'] = $stats['global_delivered'];
-                    }
-                    if ($stats['global_cancelled'] > ($stats['returned'] + $stats['cancelled'])) {
-                        $stats['returned']  = $stats['global_cancelled'];
-                        $stats['cancelled'] = 0; // Already included in returned
-                    }
-                }
-            }
-        } catch (Exception $e) {
-            // Return empty stats on error
-        }
-        
-        // Cache results
-        $this->stats_cache[$cache_key] = $stats;
-        
-        return $stats;
-    }
-
     /**
      * Check for duplicate order
      * Returns percentage of similarity with recent orders
