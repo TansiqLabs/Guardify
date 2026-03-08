@@ -391,12 +391,13 @@ jQuery(document).ready(function($) {
         var $btn = $(this);
         var $wrap = $btn.closest('.guardify-courier-wrap');
         var phone = $btn.attr('data-phone');
+        var orderId = $wrap.attr('data-order-id') || '';
         if (!phone) return;
         
-        fetchCourierForWrap($wrap, phone);
+        fetchCourierForWrap($wrap, phone, orderId);
     });
 
-    function fetchCourierForWrap($wrap, phone) {
+    function fetchCourierForWrap($wrap, phone, orderId) {
         var $btn = $wrap.find('.guardify-btn-check-report');
         
         // Hide button, show progress bar
@@ -412,7 +413,8 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'guardify_refresh_courier',
                 nonce: guardifyOrderColumns.fraud_nonce,
-                phone: phone
+                phone: phone,
+                order_id: orderId || ''
             },
             success: function(response) {
                 if (response.success && response.data && response.data.courier && response.data.courier.totalParcels) {
@@ -447,8 +449,9 @@ jQuery(document).ready(function($) {
             var $btn = $(this);
             var $wrap = $btn.closest('.guardify-courier-wrap');
             var phone = $btn.attr('data-phone');
+            var orderId = $wrap.attr('data-order-id') || '';
             if (phone && $wrap.attr('data-needs-courier') === '1') {
-                queue.push({ $wrap: $wrap, phone: phone });
+                queue.push({ $wrap: $wrap, phone: phone, orderId: orderId });
             }
         });
 
@@ -472,7 +475,7 @@ jQuery(document).ready(function($) {
                 return;
             }
 
-            fetchCourierForWrap(item.$wrap, item.phone);
+            fetchCourierForWrap(item.$wrap, item.phone, item.orderId);
 
             // Wait 1s before next request to prevent API overload
             setTimeout(processNext, 1000);

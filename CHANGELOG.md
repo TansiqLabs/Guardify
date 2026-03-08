@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.5.8 — Database-Backed Courier Cache (2026-03-08)
+
+### Changed
+- **Persistent Courier Cache (PostgreSQL):** Replaced in-memory Map cache with a `guardify_courier_cache` database table on TansiqLabs. Courier data now survives server deploys and restarts — previously, every deploy cleared the cache and forced slow re-fetches from Steadfast/Pathao APIs.
+- **Serve Stale, Refresh in Background:** When cached courier data exists but is older than 6 hours, the API returns the stale data instantly and refreshes from courier APIs in the background. First-time lookups still fetch synchronously.
+- **WordPress Order Meta Caching:** Courier data is now persisted to WooCommerce order meta (`_guardify_courier_data`). On subsequent page loads, courier stats render directly from PHP — zero AJAX calls needed for previously-checked orders.
+- **Triple Cache Hierarchy:** Order meta (permanent) → WP transient (24h) → TansiqLabs DB (6h refresh). The orders page now loads courier data instantly for any previously-checked phone number.
+- **Auto-Backfill:** If courier data exists in WP transient but not in order meta, it's automatically saved to order meta on render for future instant loads.
+
 ## v1.5.7 — Bugfixes & Stability Improvements (2026-03-08)
 
 ### Changed

@@ -199,7 +199,11 @@ class Guardify_Order_Columns {
     /**
      * Render Courier Report column
      * Shows global courier data (Steadfast + Pathao) from TansiqLabs Fraud Check API.
-     * Links to the TansiqLabs fraud-check page for detailed analysis.
+     * 
+     * Cache hierarchy (fastest first):
+     * 1. Order meta (_guardify_courier_data) — permanent, instant
+     * 2. WP transient (guardify_courier_{phone}) — 24h TTL
+     * 3. AJAX fetch → TansiqLabs API (DB-cached, background refresh) → saves to both
      */
     private function render_courier_report_column($order, string $phone): void {
         if (empty($phone)) {
@@ -207,10 +211,24 @@ class Guardify_Order_Columns {
             return;
         }
 
-        // Check for cached global courier data from fraud-check API
-        $courier = null;
-        if (class_exists('Guardify_Fraud_Check')) {
+        $order_id = $order->get_id();
+
+        // Priority 1: Check order meta (permanent cache — instant, survives everything)
+        $courier = $order->get_meta('_guardify_courier_data');
+        if (!is_array($courier) || empty($courier)) {
+            $courier = null;
+        }
+
+        // Priority 2: Check WP transient (phone-keyed, 24h TTL)
+        if (!$courier && class_exists('Guardify_Fraud_Check')) {
             $courier = Guardify_Fraud_Check::get_cached_courier_data($phone);
+            
+            // If found in transient but not in order meta, save to order meta for next time
+            if ($courier && !empty($courier['totalParcels'])) {
+                $order->update_meta_data('_guardify_courier_data', $courier);
+                $order->update_meta_data('_guardify_courier_updated', current_time('mysql'));
+                $order->save();
+            }
         }
 
         $has_data = $courier && !empty($courier['totalParcels']);
@@ -230,7 +248,7 @@ class Guardify_Order_Columns {
         // Build fraud-check URL with phone parameter for auto-search
         $fraud_check_url = add_query_arg('phone', rawurlencode($phone), 'https://tansiqlabs.com/console/apps/guardify/fraud-check');
         ?>
-        <div class="guardify-courier-wrap" data-phone="<?php echo esc_attr($phone); ?>"<?php echo !$has_data ? ' data-needs-courier="1"' : ''; ?> title="<?php esc_attr_e('Global courier data via Guardify Network (Steadfast + Pathao)', 'guardify'); ?>">
+        <div class="guardify-courier-wrap" data-phone="<?php echo esc_attr($phone); ?>" data-order-id="<?php echo esc_attr($order_id); ?>"<?php echo !$has_data ? ' data-needs-courier="1"' : ''; ?> title="<?php esc_attr_e('Global courier data via Guardify Network (Steadfast + Pathao)', 'guardify'); ?>">
             <?php if ($has_data): ?>
                 <div class="guardify-courier-stats">
                     <span class="guardify-courier-item guardify-courier-total">

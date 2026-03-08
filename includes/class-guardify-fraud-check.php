@@ -317,8 +317,8 @@ class Guardify_Fraud_Check {
 
     /**
      * AJAX handler: Fetch fresh courier data from fraud-check API for a phone number.
-     * Called from the Score column refresh button.
-     * Stores result as a phone-level transient (24h) for Score column to read.
+     * Called from the Score column refresh button or auto-load.
+     * Stores result in WP transient (24h) AND order meta (permanent) for instant rendering.
      */
     public function ajax_refresh_courier(): void {
         check_ajax_referer('guardify_ajax_nonce', 'nonce');
@@ -332,16 +332,28 @@ class Guardify_Fraud_Check {
             wp_send_json_error(['message' => 'Phone number required']);
         }
 
+        $order_id = intval($_POST['order_id'] ?? 0);
+
         $result = $this->fetch_fraud_score($phone);
         if (!$result || empty($result['success'])) {
             wp_send_json_error(['message' => 'Failed to fetch fraud data']);
         }
 
-        // Cache courier data
+        // Cache courier data in WP transient (phone-keyed, 24h)
         $courier = $result['courier'] ?? null;
         if ($courier) {
             $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
             set_transient('guardify_courier_' . $normalized, $courier, DAY_IN_SECONDS);
+
+            // Also persist to order meta for instant rendering on next page load
+            if ($order_id > 0) {
+                $order = wc_get_order($order_id);
+                if ($order) {
+                    $order->update_meta_data('_guardify_courier_data', $courier);
+                    $order->update_meta_data('_guardify_courier_updated', current_time('mysql'));
+                    $order->save();
+                }
+            }
         }
 
         wp_send_json_success([
