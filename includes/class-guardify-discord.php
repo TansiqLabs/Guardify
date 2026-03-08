@@ -180,7 +180,7 @@ class Guardify_Discord {
             $total_orders = count(wc_get_orders(['limit' => -1, 'return' => 'ids', 'status' => ['processing', 'completed', 'on-hold']]));
             $today_orders = count(wc_get_orders([
                 'limit' => -1, 'return' => 'ids',
-                'date_created' => '>=' . date('Y-m-d', current_time('timestamp')),
+                'date_created' => '>=' . wp_date('Y-m-d'),
                 'status' => ['processing', 'completed', 'on-hold'],
             ]));
         }
@@ -1135,12 +1135,13 @@ class Guardify_Discord {
             return false;
         }
 
-        // Use non-blocking request to avoid slowing down checkout/admin
+        // Use blocking request with short timeout to enable retry logic
+        // Non-blocking would make response code checks and retry logic dead code
         $response = wp_remote_post($webhook_url, [
-            'timeout'     => 2,
+            'timeout'     => 5,
             'headers'     => ['Content-Type' => 'application/json'],
             'body'        => $json_body,
-            'blocking'    => false,
+            'blocking'    => true,
             'sslverify'   => true,
             'data_format' => 'body',
         ]);
@@ -1207,9 +1208,6 @@ class Guardify_Discord {
      */
     private function fetch_fraud_score_for_discord(string $phone): ?array {
         $api_key = get_option('guardify_api_key', '');
-        if (empty($api_key)) {
-            $api_key = get_option('guardify_api_key', '');
-        }
         if (empty($api_key)) {
             return null;
         }

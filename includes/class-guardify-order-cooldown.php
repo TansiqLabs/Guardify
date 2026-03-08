@@ -57,6 +57,9 @@ class Guardify_Order_Cooldown {
             // Auto-fail orders that violate cooldown (catches draft/incomplete orders from Cartflows etc.)
             add_action('woocommerce_new_order', array($this, 'check_cooldown_on_new_order'), 5, 2);
             add_action('woocommerce_checkout_order_created', array($this, 'check_cooldown_on_new_order'), 5, 2);
+            
+            // Add stronger JS-level form submission prevention (prevents bypass attempts)
+            add_action('wp_footer', array($this, 'add_form_submission_prevention'));
         }
         
         // Always store IP address on order creation (for future reference/analytics)
@@ -522,13 +525,13 @@ class Guardify_Order_Cooldown {
                     ));
                 }
             } else {
-                // Legacy post meta - include shop_order and shop_order_placehold (for drafts)
+                // Legacy post meta - include shop_order and shop_order_placeholder (for drafts)
                 $result = $wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->postmeta} pm
                     JOIN {$wpdb->posts} p ON pm.post_id = p.ID
                     WHERE pm.meta_key = '_customer_ip_address'
                     AND pm.meta_value = %s
-                    AND p.post_type IN ('shop_order', 'shop_order_placehold')
+                    AND p.post_type IN ('shop_order', 'shop_order_placeholder')
                     AND p.post_date > %s
                     AND p.post_status NOT IN ('trash', 'wc-cancelled', 'wc-failed')",
                     $ip,
@@ -1053,7 +1056,7 @@ class Guardify_Order_Cooldown {
                     WHERE pm.meta_key = '_customer_ip_address'
                     AND pm.meta_value = %s
                     AND p.ID != %d
-                    AND p.post_type IN ('shop_order', 'shop_order_placehold')
+                    AND p.post_type IN ('shop_order', 'shop_order_placeholder')
                     AND p.post_date > %s
                     AND p.post_status NOT IN ('trash', 'wc-cancelled', 'wc-failed')",
                     $ip,
@@ -1066,5 +1069,123 @@ class Guardify_Order_Cooldown {
         } catch (Exception $e) {
             return false;
         }
+    }
+
+    /**
+     * Add stronger form submission prevention script to the checkout page.
+     * This prevents bypass attempts where JS-level blocking could be circumvented
+     * by directly clicking the place order button or programmatically submitting the form.
+     * Mirrors OrderGuard's robust form submission prevention approach.
+     */
+    public function add_form_submission_prevention(): void {
+        // Only on checkout page
+        $is_checkout_page = is_checkout();
+        
+        // Also check for Cartflows step pages
+        if (!$is_checkout_page && function_exists('wcf_get_current_step_type')) {
+            $step_type = wcf_get_current_step_type();
+            if ($step_type === 'checkout') {
+                $is_checkout_page = true;
+            }
+        }
+        
+        if (!$is_checkout_page) {
+            return;
+        }
+        
+        if (!$this->is_phone_cooldown_enabled() && !$this->is_ip_cooldown_enabled()) {
+            return;
+        }
+        
+        ?>
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            // Global flag to track if cooldown blocker has blocked submission
+            window.guardifyCooldownBlocked = false;
+            window.guardifyPhoneBlocked = false;
+            
+            // Function to prevent form submission
+            function preventFormSubmission(reason) {
+                window.guardifyCooldownBlocked = true;
+                console.log('Guardify: Form submission blocked - ' + reason);
+                
+                // Show error message if exists
+                if ($('.guardify-cooldown-error').length) {
+                    $('.guardify-cooldown-error').show();
+                }
+                
+                // Scroll to phone field
+                var $phoneField = $('#billing_phone');
+                if ($phoneField.length && $phoneField.offset()) {
+                    $('html, body').animate({
+                        scrollTop: $phoneField.offset().top - 100
+                    }, 500);
+                }
+                
+                return false;
+            }
+            
+            // Override form submission at multiple levels
+            $('form.checkout').off('submit.guardifyCooldownBlocker').on('submit.guardifyCooldownBlocker', function(e) {
+                if (window.guardifyPhoneBlocked === true) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    return preventFormSubmission('Phone number blocked by cooldown');
+                }
+                return true;
+            });
+            
+            // Override WooCommerce checkout_place_order event
+            $(document.body).off('checkout_place_order.guardifyCooldownBlocker').on('checkout_place_order.guardifyCooldownBlocker', function() {
+                if (window.guardifyPhoneBlocked === true) {
+                    return false;
+                }
+                return true;
+            });
+            
+            // Override Cartflows checkout form submission
+            if (typeof wcf_checkout !== 'undefined' || $('form.wcf-checkout-form').length) {
+                $('form.wcf-checkout-form').off('submit.guardifyCooldownBlocker').on('submit.guardifyCooldownBlocker', function(e) {
+                    if (window.guardifyPhoneBlocked === true) {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        return preventFormSubmission('Phone number blocked by cooldown (Cartflows)');
+                    }
+                    return true;
+                });
+            }
+            
+            // Override place order button clicks (all common selectors)
+            $(document).off('click.guardifyCooldownBlocker', '#place_order, .wcf-btn-place-order, .wc-block-components-checkout-place-order-button').on('click.guardifyCooldownBlocker', '#place_order, .wcf-btn-place-order, .wc-block-components-checkout-place-order-button', function(e) {
+                if (window.guardifyPhoneBlocked === true) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    return preventFormSubmission('Phone number blocked by cooldown');
+                }
+                return true;
+            });
+            
+            // Monitor for programmatic form submissions
+            var originalSubmit = $.fn.submit;
+            $.fn.submit = function() {
+                if (window.guardifyPhoneBlocked === true && this.hasClass && this.hasClass('checkout')) {
+                    console.log('Guardify: Programmatic form submission blocked');
+                    return this;
+                }
+                return originalSubmit.apply(this, arguments);
+            };
+            
+            // Monitor for programmatic trigger attempts
+            var originalTrigger = $.fn.trigger;
+            $.fn.trigger = function(event) {
+                if (event === 'submit' && window.guardifyPhoneBlocked === true) {
+                    console.log('Guardify: Programmatic form trigger blocked');
+                    return this;
+                }
+                return originalTrigger.apply(this, arguments);
+            };
+        });
+        </script>
+        <?php
     }
 }

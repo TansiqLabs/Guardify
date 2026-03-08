@@ -362,7 +362,6 @@ class Guardify_Order_Columns {
     }
 
     /**
-    /**
      * Check for duplicate order
      * Returns percentage of similarity with recent orders
      *

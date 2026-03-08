@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.7 — Bugfixes & Stability Improvements (2026-03-08)
+
+### Changed
+- Added a 7‑day grace period and backup twice-daily cron for license validation so Guardify no longer auto‑disables if a check fails.
+- Enforced frontend form submission prevention for fake/repeat order blocking; checkout button now fully stopped and review order API call intercepted.
+- Corrected `shop_order_placehold` typo in cooldown SQL query.
+- Fixed courier score column JavaScript so missing/failed network data shows "No courier data" or "Failed to load" instead of an endless loading spinner.
+- Updated Discord webhook calls to be blocking with a 5s timeout, ensuring retry logic functions when rate‑limited.
+- Replaced all `date()` calls in analytics with `wp_date()` to respect site timezone and avoid off‑by‑one‑day stats.
+- Added error handling to class includes and license revalidation functions.
+
 ## v1.5.6 — Bugfixes & Miscellaneous (2026-03-07)
 
 ### Changed

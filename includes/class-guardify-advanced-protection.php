@@ -675,7 +675,7 @@ class Guardify_Advanced_Protection {
         );
 
         for ($i = $days - 1; $i >= 0; $i--) {
-            $date = date('Y-m-d', strtotime("-{$i} days"));
+            $date = wp_date('Y-m-d', strtotime("-{$i} days"));
             
             if (isset($daily_stats[$date])) {
                 $stats['total'] += $daily_stats[$date]['total'];

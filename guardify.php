@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast & Pathao courier integration, and order tracking features.
- * Version: 1.5.6
+ * Version: 1.5.7
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.5.6');
+define('GUARDIFY_VERSION', '1.5.7');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -135,11 +135,67 @@ function guardify_safe_include(string $file_path, string $class_name = ''): void
 }
 
 /**
+ * Attempt to re-validate the license with the server.
+ * Called when the license staleness check fails.
+ * This prevents the plugin from silently disabling itself
+ * when the daily cron job fails to fire.
+ *
+ * @param string $api_key The license key to validate.
+ */
+function guardify_attempt_license_revalidation(string $api_key): void {
+    if (empty($api_key)) {
+        return;
+    }
+    
+    $site_url = home_url();
+    $api_url  = 'https://tansiqlabs.com/wp-json/tansiq-license/v1/validate';
+    
+    $response = wp_remote_post($api_url, array(
+        'timeout' => 15,
+        'body'    => array(
+            'license_key' => $api_key,
+            'site_url'    => $site_url,
+        ),
+    ));
+    
+    if (is_wp_error($response)) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('Guardify: License revalidation failed - ' . $response->get_error_message());
+        }
+        return;
+    }
+    
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+    
+    if (!empty($body['status']) && $body['status'] === 'active') {
+        update_option('guardify_license_status', 'active');
+        update_option('guardify_license_last_check', gmdate('Y-m-d H:i:s'));
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('Guardify: License revalidation succeeded.');
+        }
+    } else {
+        $status = $body['status'] ?? 'unknown';
+        update_option('guardify_license_status', $status);
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('Guardify: License revalidation returned status: ' . $status);
+        }
+    }
+}
+
+// Hook for backup twice-daily license recheck
+add_action('guardify_license_recheck', function() {
+    $api_key = get_option('guardify_api_key', '');
+    if (!empty($api_key)) {
+        guardify_attempt_license_revalidation($api_key);
+    }
+});
+
+/**
  * Check if the plugin is connected to TansiqLabs via a valid license.
  * Returns true when:
  *  1. A license key exists
  *  2. The stored status is 'active'
- *  3. Either: Last check was within 3 days, OR no check yet (newly activated)
+ *  3. Either: Last check was within 7 days, OR no check yet (newly activated)
  */
 function guardify_is_connected(): bool {
     $api_key = get_option('guardify_api_key', '');
@@ -150,14 +206,37 @@ function guardify_is_connected(): bool {
         return false;
     }
     
-    // Staleness check — require server contact within the last 3 days
+    // Staleness check — require server contact within the last 7 days
     // BUT: allow newly activated licenses (no check yet) to work
     $last_check = get_option('guardify_license_last_check', '');
     if (!empty($last_check)) {
         // Use gmdate/strtotime with UTC to avoid timezone mismatch
         $last_check_time = strtotime($last_check . ' UTC');
-        $stale_threshold = 3 * DAY_IN_SECONDS; // 3 days
+        $stale_threshold = 7 * DAY_IN_SECONDS; // 7 days grace period
+
         if ($last_check_time && (time() - $last_check_time) > $stale_threshold) {
+            // Before returning false, attempt a background re-validation
+            // This prevents the plugin from silently disabling itself
+            if (!get_transient('guardify_revalidation_in_progress')) {
+                set_transient('guardify_revalidation_in_progress', true, 5 * MINUTE_IN_SECONDS);
+                // Try to re-validate the license in background
+                guardify_attempt_license_revalidation($api_key);
+                // Re-check status after revalidation attempt
+                $status_after = get_option('guardify_license_status', '');
+                $last_check_after = get_option('guardify_license_last_check', '');
+                if ($status_after === 'active' && !empty($last_check_after)) {
+                    $last_check_time_after = strtotime($last_check_after . ' UTC');
+                    if ($last_check_time_after && (time() - $last_check_time_after) <= $stale_threshold) {
+                        delete_transient('guardify_revalidation_in_progress');
+                        return true; // Revalidation succeeded
+                    }
+                }
+                delete_transient('guardify_revalidation_in_progress');
+            }
+            // Log the stale check for debugging
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('Guardify: License check is stale. Last check: ' . $last_check . '. Features temporarily disabled until re-validation succeeds.');
+            }
             return false; // Stale cache, not verified recently
         }
     }
@@ -166,6 +245,11 @@ function guardify_is_connected(): bool {
     // Ensure the daily validation cron is scheduled
     if (!wp_next_scheduled('guardify_daily_cleanup')) {
         wp_schedule_event(time(), 'daily', 'guardify_daily_cleanup');
+    }
+    
+    // Also schedule a twice-daily check as backup to prevent staleness
+    if (!wp_next_scheduled('guardify_license_recheck')) {
+        wp_schedule_event(time(), 'twicedaily', 'guardify_license_recheck');
     }
     
     return true;
@@ -536,6 +620,7 @@ function guardify_cleanup_old_data(): void {
 function guardify_deactivate(): void {
     // Clear any scheduled hooks
     wp_clear_scheduled_hook('guardify_daily_cleanup');
+    wp_clear_scheduled_hook('guardify_license_recheck');
     
     flush_rewrite_rules();
 }

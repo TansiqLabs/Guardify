@@ -14,10 +14,34 @@
     var isBlocked = false;
     var checkTimeout;
 
+    // Initialize global flags for form submission prevention integration
+    window.guardifyPhoneBlocked = false;
+    window.guardifyCooldownBlocked = false;
+
+    /**
+     * Set blocked state globally
+     */
+    function setBlockedState(blocked) {
+        isBlocked = blocked;
+        window.guardifyPhoneBlocked = blocked;
+        window.guardifyCooldownBlocked = blocked;
+        
+        // Update place order button state
+        var $placeOrderBtn = $('#place_order, .wcf-btn-place-order, .wc-block-components-checkout-place-order-button');
+        if (blocked) {
+            $placeOrderBtn.addClass('guardify-blocked').prop('disabled', true);
+        } else {
+            $placeOrderBtn.removeClass('guardify-blocked').prop('disabled', false);
+        }
+    }
+
     /**
      * Show blocked popup
      */
     function showBlockedPopup(message) {
+        // Remove any existing popup first
+        $('.guardify-blocked-popup').remove();
+        
         var contactNumber = settings.contactNumber || '';
         var contactButton = '';
         
@@ -69,17 +93,17 @@
             },
             success: function(response) {
                 if (!response.success && response.data && response.data.blocked) {
-                    isBlocked = true;
+                    setBlockedState(true);
                     showBlockedPopup(response.data.message);
                 } else {
-                    // IMPORTANT: Reset blocked state when check passes
-                    isBlocked = false;
+                    // Reset blocked state when check passes
+                    setBlockedState(false);
                 }
             },
             error: function() {
-                // IMPORTANT: On AJAX error, don't block the order
+                // On AJAX error, don't block the order
                 // Let server-side validation handle it
-                isBlocked = false;
+                setBlockedState(false);
             }
         });
     }
@@ -89,14 +113,9 @@
      */
     $(document).ready(function() {
         // Only proceed if at least one cooldown is enabled
-        // PHP passes boolean true/false which JS receives as true/false
         if (!settings.phoneCooldownEnabled && !settings.ipCooldownEnabled) {
             return;
         }
-
-        // DO NOT check IP cooldown on page load - this slows down first load
-        // IP will be checked server-side during checkout
-        // Only check when user submits or gives phone number
 
         // Check phone cooldown on input
         if (settings.phoneCooldownEnabled) {
@@ -110,6 +129,9 @@
                     checkTimeout = setTimeout(function() {
                         checkCooldown(phone);
                     }, 500);
+                } else {
+                    // Reset blocked state if phone is too short (user is editing)
+                    setBlockedState(false);
                 }
             });
 
@@ -119,33 +141,34 @@
                     checkCooldown(phone);
                 }
             });
+
+            // Also check on page load if phone field already has a value
+            var existingPhone = $('#billing_phone').val();
+            if (existingPhone && existingPhone.length >= 11) {
+                checkCooldown(existingPhone);
+            }
         }
 
-        // Prevent form submission if blocked
-        // IMPORTANT: Only show warning, don't hard block - server-side handles final validation
+        // Prevent form submission if blocked - HARD BLOCK at JS level
         $('form.checkout, form.woocommerce-checkout, .wcf-checkout-form').on('checkout_place_order submit', function(e) {
             if (isBlocked) {
-                // Show popup but let form submit anyway
-                // Server-side will catch if truly blocked
+                e.preventDefault();
+                e.stopImmediatePropagation();
                 var message = settings.phoneCooldownMessage || settings.ipCooldownMessage;
                 showBlockedPopup(message);
-                
-                // Return true - let server decide final outcome
-                // This prevents AJAX timing issues from blocking legitimate orders
-                return true;
+                return false;
             }
             return true;
         });
 
-        // Remove hard block on place order button
-        // Server-side validation is the source of truth
-        $(document).on('click', '#place_order, .wcf-checkout-place-order', function(e) {
-            // Don't prevent default - let the form submit
-            // Server-side validation will handle blocking if needed
+        // Block place order button clicks
+        $(document).on('click', '#place_order, .wcf-btn-place-order, .wcf-checkout-place-order, .wc-block-components-checkout-place-order-button', function(e) {
             if (isBlocked) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
                 var message = settings.phoneCooldownMessage || settings.ipCooldownMessage;
                 showBlockedPopup(message);
-                // Don't return false - let it proceed
+                return false;
             }
         });
     });
