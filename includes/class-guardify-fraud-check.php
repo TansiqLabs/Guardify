@@ -386,8 +386,8 @@ class Guardify_Fraud_Check {
             wp_send_json_error(['message' => 'No phone numbers provided']);
         }
 
-        // Limit to 10 phones per batch to prevent courier API rate limiting
-        $phones = array_slice(array_unique($phones), 0, 10);
+        // Limit to 20 phones per batch (server-side 6h courier cache makes this safe)
+        $phones = array_slice(array_unique($phones), 0, 20);
         $results = [];
 
         foreach ($phones as $phone) {
@@ -395,14 +395,14 @@ class Guardify_Fraud_Check {
 
             $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
 
-            // Check cache first — skip API call if already cached
+            // Check local WP transient cache first — skip API call if already cached
             $cached = get_transient('guardify_courier_' . $normalized);
             if (is_array($cached) && !empty($cached['totalParcels'])) {
                 $results[$phone] = $cached;
                 continue;
             }
 
-            // Fetch from API
+            // Fetch from API (server has its own 6h courier cache, so this is fast)
             $result = $this->fetch_fraud_score($phone);
             if ($result && !empty($result['success']) && !empty($result['courier'])) {
                 $courier = $result['courier'];
@@ -411,9 +411,6 @@ class Guardify_Fraud_Check {
             } else {
                 $results[$phone] = null;
             }
-
-            // Small delay between API calls to avoid rate limiting (100ms)
-            usleep(100000);
         }
 
         wp_send_json_success($results);

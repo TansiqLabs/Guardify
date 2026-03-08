@@ -387,59 +387,66 @@ jQuery(document).ready(function($) {
 
         console.log('Guardify: Auto-fetching courier data for', phoneList.length, 'phone(s)');
 
-        $.post(guardifyOrderColumns.ajax_url, {
-            action: 'guardify_batch_refresh_courier',
-            nonce: guardifyOrderColumns.fraud_nonce,
-            phones: phoneList
-        }, function(response) {
-            if (response.success && response.data) {
-                $.each(response.data, function(phone, courierData) {
-                    if (!courierData || !courierData.totalParcels) {
-                        // No data available — replace loading with "No data" message
-                        $('.guardify-courier-wrap[data-phone="' + phone + '"][data-needs-courier="1"]').each(function() {
+        $.ajax({
+            url: guardifyOrderColumns.ajax_url,
+            type: 'POST',
+            timeout: 60000, // 60s timeout — server-side cache makes responses fast
+            data: {
+                action: 'guardify_batch_refresh_courier',
+                nonce: guardifyOrderColumns.fraud_nonce,
+                phones: phoneList
+            },
+            success: function(response) {
+                if (response.success && response.data) {
+                    $.each(response.data, function(phone, courierData) {
+                        if (!courierData || !courierData.totalParcels) {
+                            // No data available — replace loading with "No data" message
+                            $('.guardify-courier-wrap[data-phone="' + phone + '"][data-needs-courier="1"]').each(function() {
+                                $(this).find('.guardify-courier-loading').html(
+                                    '<span class="guardify-courier-no-data">No courier data</span>'
+                                );
+                                $(this).removeAttr('data-needs-courier');
+                            });
+                            return;
+                        }
+                        // Update ALL Courier Report columns with this phone number
+                        $('.guardify-courier-wrap[data-phone="' + phone + '"]').each(function() {
+                            updateCourierWrap($(this), courierData);
+                        });
+                    });
+                    
+                    // Handle phones that weren't in the response at all
+                    $('.guardify-courier-wrap[data-needs-courier="1"]').each(function() {
+                        var phone = $(this).attr('data-phone');
+                        if (phone && !response.data.hasOwnProperty(phone)) {
                             $(this).find('.guardify-courier-loading').html(
                                 '<span class="guardify-courier-no-data">No courier data</span>'
                             );
                             $(this).removeAttr('data-needs-courier');
-                        });
-                        return;
-                    }
-                    // Update ALL Courier Report columns with this phone number
-                    $('.guardify-courier-wrap[data-phone="' + phone + '"]').each(function() {
-                        updateCourierWrap($(this), courierData);
+                        }
                     });
-                });
-                
-                // Handle phones that weren't in the response at all
-                $('.guardify-courier-wrap[data-needs-courier="1"]').each(function() {
-                    var phone = $(this).attr('data-phone');
-                    if (phone && !response.data.hasOwnProperty(phone)) {
+                    
+                    console.log('Guardify: Courier data loaded for', Object.keys(response.data).length, 'phone(s)');
+                } else {
+                    // Request succeeded but no data — clear all loading states
+                    $('.guardify-courier-wrap[data-needs-courier="1"]').each(function() {
                         $(this).find('.guardify-courier-loading').html(
                             '<span class="guardify-courier-no-data">No courier data</span>'
                         );
                         $(this).removeAttr('data-needs-courier');
-                    }
-                });
-                
-                console.log('Guardify: Courier data loaded for', Object.keys(response.data).length, 'phone(s)');
-            } else {
-                // Request succeeded but no data — clear all loading states
+                    });
+                }
+            },
+            error: function() {
+                console.warn('Guardify: Failed to fetch courier data');
+                // On failure, clear loading states to prevent "Loading..." stuck forever
                 $('.guardify-courier-wrap[data-needs-courier="1"]').each(function() {
                     $(this).find('.guardify-courier-loading').html(
-                        '<span class="guardify-courier-no-data">No courier data</span>'
+                        '<span class="guardify-courier-no-data">Failed to load</span>'
                     );
                     $(this).removeAttr('data-needs-courier');
                 });
             }
-        }).fail(function() {
-            console.warn('Guardify: Failed to fetch courier data');
-            // On failure, clear loading states to prevent "Loading..." stuck forever
-            $('.guardify-courier-wrap[data-needs-courier="1"]').each(function() {
-                $(this).find('.guardify-courier-loading').html(
-                    '<span class="guardify-courier-no-data">Failed to load</span>'
-                );
-                $(this).removeAttr('data-needs-courier');
-            });
         });
     }, 800); // 800ms delay ensures page is fully painted first
 

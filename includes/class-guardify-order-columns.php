@@ -227,8 +227,8 @@ class Guardify_Order_Columns {
             $success_class = 'courier-success-medium';
         }
 
-        // Build fraud-check URL
-        $fraud_check_url = 'https://tansiqlabs.com/console/apps/guardify/fraud-check';
+        // Build fraud-check URL with phone parameter for auto-search
+        $fraud_check_url = add_query_arg('phone', rawurlencode($phone), 'https://tansiqlabs.com/console/apps/guardify/fraud-check');
         ?>
         <div class="guardify-courier-wrap" data-phone="<?php echo esc_attr($phone); ?>"<?php echo !$has_data ? ' data-needs-courier="1"' : ''; ?> title="<?php esc_attr_e('Global courier data via Guardify Network (Steadfast + Pathao)', 'guardify'); ?>">
             <?php if ($has_data): ?>
