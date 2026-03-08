@@ -100,12 +100,56 @@
     font-style: italic;
 }
 
-.guardify-courier-loading {
-    text-align: center;
-    padding: 6px 0;
+/* Check Report button */
+.guardify-btn-check-report {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #16bbe9;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
 }
 
-.guardify-courier-loading-text {
+.guardify-btn-check-report:hover {
+    background: #dbeafe;
+    color: #2563eb;
+    border-color: #93c5fd;
+    transform: translateY(-1px);
+}
+
+/* Progress bar (loading animation) */
+.guardify-courier-progress {
+    width: 100%;
+    height: 4px;
+    background: #e2e8f0;
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 8px 0;
+}
+
+.guardify-courier-progress-bar {
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6);
+    background-size: 200% 100%;
+    border-radius: 2px;
+    animation: guardify-progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes guardify-progress-slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+
+/* No data / error state */
+.guardify-courier-no-data {
     font-size: 11px;
     color: #94a3b8;
     font-style: italic;

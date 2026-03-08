@@ -251,9 +251,10 @@ class Guardify_Order_Columns {
                     </span>
                 </div>
             <?php else: ?>
-                <div class="guardify-courier-loading">
-                    <span class="guardify-courier-loading-text"><?php _e('Loading...', 'guardify'); ?></span>
-                </div>
+                <div class="guardify-courier-result"></div>
+                <button type="button" class="guardify-btn-check-report" data-phone="<?php echo esc_attr($phone); ?>">
+                    <?php _e('Check Report', 'guardify'); ?>
+                </button>
             <?php endif; ?>
             <a href="<?php echo esc_url($fraud_check_url); ?>" target="_blank" rel="noopener" class="guardify-courier-link" title="<?php esc_attr_e('View full fraud report on TansiqLabs', 'guardify'); ?>">
                 🔍 <?php _e('Fraud Check', 'guardify'); ?>
