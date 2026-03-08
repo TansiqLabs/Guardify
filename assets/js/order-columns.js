@@ -438,9 +438,9 @@ jQuery(document).ready(function($) {
         });
     }
 
-    // Auto-load: Sequential queue (like OrderGuard), max 25 orders, 1s delay
+    // Auto-load: Bulk sync from DB first, then individual fetch for missing phones
     function autoLoadReports() {
-        var maxOrdersToLoad = 25;
+        var maxOrdersToLoad = 50;
         var $buttons = $('.guardify-btn-check-report');
         var queue = [];
 
@@ -459,17 +459,83 @@ jQuery(document).ready(function($) {
 
         console.log('Guardify: Auto-loading courier reports for', queue.length, 'order(s)');
 
+        // Collect unique phones and their order_ids for bulk sync
+        var phones = [];
+        var orderIds = {};
+        for (var i = 0; i < queue.length; i++) {
+            var p = queue[i].phone;
+            if (phones.indexOf(p) === -1) {
+                phones.push(p);
+            }
+            if (queue[i].orderId) {
+                orderIds[p] = queue[i].orderId;
+            }
+        }
+
+        // Step 1: Try bulk courier-sync (DB-cached data, instant response)
+        $.ajax({
+            url: guardifyOrderColumns.ajax_url,
+            type: 'POST',
+            timeout: 15000,
+            data: {
+                action: 'guardify_courier_sync',
+                nonce: guardifyOrderColumns.fraud_nonce,
+                phones: phones,
+                order_ids: orderIds
+            },
+            success: function(response) {
+                if (!response.success || !response.data || !response.data.results) {
+                    console.log('Guardify: Bulk sync failed, falling back to individual fetches');
+                    individualFetchSequential(queue);
+                    return;
+                }
+
+                var results = response.data.results;
+                var needsIndividualFetch = [];
+
+                // Update wraps that got data from DB cache
+                for (var i = 0; i < queue.length; i++) {
+                    var item = queue[i];
+                    var data = results[item.phone];
+
+                    if (data && data.totalParcels) {
+                        // DB had cached data — render it instantly
+                        updateCourierWrap(item.$wrap, data);
+                    } else {
+                        // Not in DB cache — needs individual fetch (will also populate DB)
+                        needsIndividualFetch.push(item);
+                    }
+                }
+
+                console.log('Guardify: Bulk sync: ' + (response.data.cached || 0) + ' cached, ' + needsIndividualFetch.length + ' need individual fetch');
+
+                // Step 2: Fetch remaining phones individually (this also populates DB cache for next time)
+                if (needsIndividualFetch.length > 0) {
+                    individualFetchSequential(needsIndividualFetch);
+                } else {
+                    console.log('Guardify: All courier reports loaded from cache');
+                }
+            },
+            error: function() {
+                console.log('Guardify: Bulk sync request failed, falling back to individual fetches');
+                individualFetchSequential(queue);
+            }
+        });
+    }
+
+    // Sequential individual fetch for phones not in DB cache
+    function individualFetchSequential(queue) {
         var index = 0;
         function processNext() {
             if (index >= queue.length) {
-                console.log('Guardify: All courier reports loaded');
+                console.log('Guardify: All individual courier fetches complete');
                 return;
             }
 
             var item = queue[index];
             index++;
 
-            // Skip if already loaded (e.g. duplicate phone already fetched)
+            // Skip if already loaded (e.g. duplicate phone already fetched by sync)
             if (item.$wrap.attr('data-needs-courier') !== '1') {
                 processNext();
                 return;

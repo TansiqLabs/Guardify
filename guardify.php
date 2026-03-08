@@ -3,7 +3,7 @@
  * Plugin Name: Guardify
  * Plugin URI: https://github.com/TansiqLabs/Guardify
  * Description: Advanced WooCommerce fraud prevention plugin with Bangladesh phone validation, IP/Phone cooldown, Cartflows support, Whitelist, Address Detection, Analytics, SteadFast & Pathao courier integration, and order tracking features.
- * Version: 1.5.8
+ * Version: 1.5.9
  * Author: Tansiq Labs
  * Author URI: https://tansiqlabs.com/
  * Text Domain: guardify
@@ -26,7 +26,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('GUARDIFY_VERSION', '1.5.8');
+define('GUARDIFY_VERSION', '1.5.9');
 define('GUARDIFY_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GUARDIFY_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GUARDIFY_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -148,14 +148,21 @@ function guardify_attempt_license_revalidation(string $api_key): void {
     }
     
     $site_url = home_url();
-    $api_url  = 'https://tansiqlabs.com/wp-json/tansiq-license/v1/validate';
+    $api_url  = 'https://tansiqlabs.com/api/guardify/validate';
     
     $response = wp_remote_post($api_url, array(
         'timeout' => 15,
-        'body'    => array(
+        'headers' => array(
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+        ),
+        'body'    => wp_json_encode(array(
             'license_key' => $api_key,
             'site_url'    => $site_url,
-        ),
+            'wp_version'  => get_bloginfo('version'),
+            'plugin_version' => defined('GUARDIFY_VERSION') ? GUARDIFY_VERSION : '',
+            'php_version' => PHP_VERSION,
+        )),
     ));
     
     if (is_wp_error($response)) {
@@ -167,14 +174,15 @@ function guardify_attempt_license_revalidation(string $api_key): void {
     
     $body = json_decode(wp_remote_retrieve_body($response), true);
     
-    if (!empty($body['status']) && $body['status'] === 'active') {
+    if (!empty($body['success']) && !empty($body['license']['status']) && $body['license']['status'] === 'active') {
         update_option('guardify_license_status', 'active');
         update_option('guardify_license_last_check', gmdate('Y-m-d H:i:s'));
+        update_option('guardify_license_validation_failures', 0);
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log('Guardify: License revalidation succeeded.');
         }
     } else {
-        $status = $body['status'] ?? 'unknown';
+        $status = $body['license']['status'] ?? ($body['message'] ?? 'unknown');
         update_option('guardify_license_status', $status);
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log('Guardify: License revalidation returned status: ' . $status);
@@ -184,9 +192,10 @@ function guardify_attempt_license_revalidation(string $api_key): void {
 
 // Hook for backup twice-daily license recheck
 add_action('guardify_license_recheck', function() {
-    $api_key = get_option('guardify_api_key', '');
-    if (!empty($api_key)) {
-        guardify_attempt_license_revalidation($api_key);
+    // Use original license key for validation (not the site API key)
+    $license_key = get_option('guardify_original_license_key', get_option('guardify_api_key', ''));
+    if (!empty($license_key)) {
+        guardify_attempt_license_revalidation($license_key);
     }
 });
 

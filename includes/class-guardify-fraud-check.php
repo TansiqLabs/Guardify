@@ -20,6 +20,9 @@ class Guardify_Fraud_Check {
     /** TansiqLabs Fraud Check endpoint. */
     private const API_ENDPOINT = 'https://tansiqlabs.com/api/guardify/fraud-check';
 
+    /** TansiqLabs Courier Sync endpoint (bulk cached data). */
+    private const COURIER_SYNC_ENDPOINT = 'https://tansiqlabs.com/api/guardify/courier-sync';
+
     /** Transient TTL: cache each result for 10 minutes. */
     private const CACHE_TTL = 600;
 
@@ -45,6 +48,9 @@ class Guardify_Fraud_Check {
         // AJAX handler for refreshing global courier data (Score column)
         add_action('wp_ajax_guardify_refresh_courier', [$this, 'ajax_refresh_courier']);
         add_action('wp_ajax_guardify_batch_refresh_courier', [$this, 'ajax_batch_refresh_courier']);
+
+        // AJAX handler for bulk courier sync (fetches cached data from TansiqLabs DB)
+        add_action('wp_ajax_guardify_courier_sync', [$this, 'ajax_courier_sync']);
 
         // AJAX handler for bulk fraud score update (old orders)
         add_action('wp_ajax_guardify_bulk_fraud_update', [$this, 'ajax_bulk_fraud_update']);
@@ -374,6 +380,98 @@ class Guardify_Fraud_Check {
         $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
         $data = get_transient('guardify_courier_' . $normalized);
         return is_array($data) ? $data : null;
+    }
+
+    // ── Courier Sync (bulk DB cache fetch) ─────────────────────────────
+
+    /**
+     * AJAX handler: Bulk-fetch cached courier data from TansiqLabs DB.
+     * Returns ONLY data already cached in TansiqLabs PostgreSQL — no courier API calls.
+     * For phones missing from the cache, returns null so the JS can do individual fetches.
+     *
+     * Request:  { nonce, phones: ['01...', ...], order_ids: {'01...': 123, ...} }
+     * Response: { success: true, data: { results: {phone: {...}|null}, cached, missing } }
+     */
+    public function ajax_courier_sync(): void {
+        check_ajax_referer('guardify_ajax_nonce', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+        }
+
+        $phones = isset($_POST['phones']) && is_array($_POST['phones'])
+            ? array_map('sanitize_text_field', $_POST['phones'])
+            : [];
+
+        $order_ids = isset($_POST['order_ids']) && is_array($_POST['order_ids'])
+            ? array_map('intval', $_POST['order_ids'])
+            : [];
+
+        if (empty($phones)) {
+            wp_send_json_error(['message' => 'No phone numbers provided']);
+        }
+
+        // Limit to 50 phones
+        $phones = array_slice(array_unique($phones), 0, 50);
+
+        $api_key = get_option('guardify_api_key', '');
+        if (empty($api_key)) {
+            wp_send_json_error(['message' => 'Plugin not activated']);
+        }
+
+        // Call TansiqLabs courier-sync endpoint (DB-cached, no courier API calls)
+        $response = wp_remote_post(self::COURIER_SYNC_ENDPOINT, [
+            'timeout' => 15,
+            'headers' => [
+                'Content-Type'  => 'application/json',
+                'Accept'        => 'application/json',
+            ],
+            'body' => wp_json_encode([
+                'api_key' => $api_key,
+                'phones'  => $phones,
+            ]),
+        ]);
+
+        if (is_wp_error($response)) {
+            wp_send_json_error(['message' => 'Failed to connect to TansiqLabs: ' . $response->get_error_message()]);
+        }
+
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if (empty($body['success'])) {
+            wp_send_json_error(['message' => $body['message'] ?? 'Courier sync failed']);
+        }
+
+        $results = $body['results'] ?? [];
+
+        // Save each result to WP transient AND order meta
+        foreach ($results as $phone => $data) {
+            if (!is_array($data) || empty($data['totalParcels'])) {
+                continue;
+            }
+
+            $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
+            
+            // Save to WP transient (24h)
+            set_transient('guardify_courier_' . $normalized, $data, DAY_IN_SECONDS);
+
+            // Save to order meta if order_id is provided
+            $order_id = $order_ids[$phone] ?? ($order_ids[$normalized] ?? 0);
+            if ($order_id > 0) {
+                $order = wc_get_order($order_id);
+                if ($order) {
+                    $order->update_meta_data('_guardify_courier_data', $data);
+                    $order->update_meta_data('_guardify_courier_updated', current_time('mysql'));
+                    $order->save();
+                }
+            }
+        }
+
+        wp_send_json_success([
+            'results' => $results,
+            'cached'  => $body['cached'] ?? 0,
+            'missing' => $body['missing'] ?? 0,
+        ]);
     }
 
     // ── Batch Refresh Courier (auto-load after page paint) ─────────────

@@ -1772,6 +1772,8 @@ class Guardify_Settings {
             // This overwrites the license key — guardify_api_key is the single key
             // used for both connection validation and API authentication.
             if (!empty($data['site_api_key'])) {
+                // Preserve the original license key for revalidation/deactivation
+                update_option('guardify_original_license_key', $api_key);
                 update_option('guardify_api_key', sanitize_text_field($data['site_api_key']));
             }
             
@@ -1815,9 +1817,10 @@ class Guardify_Settings {
             wp_send_json_error(array('message' => __('Permission denied', 'guardify')));
         }
         
-        $api_key = get_option('guardify_api_key', '');
+        // Use original license key for deactivation (not the site API key)
+        $license_key = get_option('guardify_original_license_key', get_option('guardify_api_key', ''));
         
-        if (empty($api_key)) {
+        if (empty($license_key)) {
             wp_send_json_error(array('message' => __('No license to deactivate', 'guardify')));
         }
         
@@ -1828,13 +1831,14 @@ class Guardify_Settings {
                 'Content-Type' => 'application/json',
             ),
             'body' => wp_json_encode(array(
-                'license_key' => $api_key,
+                'license_key' => $license_key,
                 'site_url' => home_url(),
             )),
         ));
         
         // Clear local license data regardless of API response
         delete_option('guardify_api_key');
+        delete_option('guardify_original_license_key');
         delete_option('guardify_license_status');
         delete_option('guardify_license_expiry');
         delete_option('guardify_license_plan');
@@ -1907,6 +1911,8 @@ class Guardify_Settings {
             update_option('guardify_license_validation_failures', 0);
             // Merged key: store site API key as the primary key used for all API auth
             if (!empty($data['site_api_key'])) {
+                // Preserve the original license key for revalidation/deactivation
+                update_option('guardify_original_license_key', $api_key);
                 update_option('guardify_api_key', sanitize_text_field($data['site_api_key']));
             }
             if (!wp_next_scheduled('guardify_daily_cleanup')) {
@@ -2032,9 +2038,10 @@ class Guardify_Settings {
      * Validate license with TansiqLabs server
      */
     public function validate_license_with_server(): array {
-        $api_key = get_option('guardify_api_key', '');
+        // Use original license key for validation (not the site API key)
+        $license_key = get_option('guardify_original_license_key', get_option('guardify_api_key', ''));
         
-        if (empty($api_key)) {
+        if (empty($license_key)) {
             return array('success' => false, 'message' => 'No license key configured');
         }
         
@@ -2046,7 +2053,7 @@ class Guardify_Settings {
                 'Accept' => 'application/json',
             ),
             'body' => wp_json_encode(array(
-                'license_key' => $api_key,
+                'license_key' => $license_key,
                 'site_url' => home_url(),
                 'wp_version' => get_bloginfo('version'),
                 'plugin_version' => GUARDIFY_VERSION,

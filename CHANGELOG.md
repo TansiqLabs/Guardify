@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.9 — Per-Provider Courier Cache + Bulk Sync + License Auth Fix (2026-03-08)
+
+### Changed
+- **Per-Provider Courier Storage:** Redesigned the TansiqLabs courier cache schema from flat JSON to a proper relational model (`guardify_courier_cache` + `guardify_courier_providers`). Each courier provider (Steadfast, Pathao, etc.) gets its own row. Adding new courier integrations requires zero schema changes — just insert rows into the providers table.
+- **Bulk Courier Sync API:** New `/api/guardify/courier-sync` endpoint returns cached courier data for up to 50 phones in a single request (DB-only, no courier API calls). The WP plugin now tries this bulk sync first, instantly rendering all cached data, then falls back to individual requests only for phones not yet in the DB.
+- **License Auth Fix:** Fixed critical bug where original license key was lost after activation (overwritten by `site_api_key`). License revalidation and deactivation now correctly use the original license key. Also fixed validation URL and request format.
+- **Preserved Original License Key:** Added `guardify_original_license_key` option to preserve the license key separately from the site API key used for data requests.
+
 ## v1.5.8 — Database-Backed Courier Cache (2026-03-08)
 
 ### Changed
