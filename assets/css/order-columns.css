@@ -100,6 +100,16 @@
     font-style: italic;
 }
 
+/* Provider badges (e.g., "Steadfast · Pathao") */
+.guardify-courier-providers {
+    font-size: 9px;
+    font-weight: 600;
+    color: #64748b;
+    text-align: center;
+    margin-top: 3px;
+    letter-spacing: 0.3px;
+}
+
 /* Check Report button */
 .guardify-btn-check-report {
     display: inline-flex;

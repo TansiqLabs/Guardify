@@ -345,6 +345,16 @@ jQuery(document).ready(function($) {
         $wrap.find('.guardify-courier-result').remove();
         $wrap.find('.guardify-btn-check-report').remove();
         $wrap.find('.guardify-courier-progress').remove();
+
+        // Build per-provider badges (e.g., "Steadfast · Pathao")
+        var providerBadges = '';
+        if (c.sources && c.sources.length > 0) {
+            var names = [];
+            for (var i = 0; i < c.sources.length; i++) {
+                names.push(c.sources[i].provider || 'Unknown');
+            }
+            providerBadges = '<div class="guardify-courier-providers">' + names.join(' · ') + '</div>';
+        }
         
         var statsHtml = '<div class="guardify-courier-stats">' +
             '<span class="guardify-courier-item guardify-courier-total">' +
@@ -363,7 +373,7 @@ jQuery(document).ready(function($) {
                 '<span class="courier-value">' + (c.successRate || 0) + '%</span>' +
                 '<span class="courier-label">🌐 SUCCESS</span>' +
             '</span>' +
-        '</div>';
+        '</div>' + providerBadges;
         
         // Insert stats before the fraud check link
         $wrap.find('.guardify-courier-link').before(statsHtml);

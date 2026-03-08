@@ -274,16 +274,35 @@ class Guardify_Fraud_Check {
         }
     }
 
-    private function fetch_fraud_score(string $phone): ?array {
+    /**
+     * Fetch fraud score / courier data from TansiqLabs API.
+     *
+     * If Steadfast data was already fetched locally (using client's own credentials),
+     * pass it here so TansiqLabs can cache it in the DB and skip its own Steadfast call.
+     *
+     * @param string     $phone          Phone number
+     * @param array|null $steadfast_data Pre-fetched Steadfast data from local call, or null
+     * @return array|null API response body
+     */
+    private function fetch_fraud_score(string $phone, ?array $steadfast_data = null): ?array {
         $api_key = get_option('guardify_api_key', '');
+
+        $payload = [
+            'api_key' => $api_key,
+            'phone'   => $phone,
+        ];
+
+        // If we already have Steadfast data from the client's own API call,
+        // tell TansiqLabs to skip Steadfast and just cache what we send
+        if ($steadfast_data) {
+            $payload['skip_steadfast'] = true;
+            $payload['steadfast_data'] = $steadfast_data;
+        }
 
         $response = wp_remote_post(self::API_ENDPOINT, [
             'timeout'     => 15,
             'headers'     => ['Content-Type' => 'application/json'],
-            'body'        => wp_json_encode([
-                'api_key' => $api_key,
-                'phone'   => $phone,
-            ]),
+            'body'        => wp_json_encode($payload),
             'sslverify'   => true,
         ]);
 
@@ -322,9 +341,96 @@ class Guardify_Fraud_Check {
     // ── Refresh Global Courier Data ──────────────────────────────────────
 
     /**
-     * AJAX handler: Fetch fresh courier data from fraud-check API for a phone number.
-     * Called from the Score column refresh button or auto-load.
-     * Stores result in WP transient (24h) AND order meta (permanent) for instant rendering.
+     * Fetch Steadfast courier data DIRECTLY using the client's own Steadfast API credentials.
+     * This avoids the rate limit on our central TansiqLabs key — the client's merchant account
+     * has much higher or no limits.
+     *
+     * Reads credentials from steadfast-api plugin options.
+     *
+     * @param string $phone Phone number (will be normalized)
+     * @return array|null {provider, totalParcels, totalDelivered, totalCancelled, successRate, cancellationRate}
+     */
+    private function fetch_local_steadfast_data(string $phone): ?array {
+        // Read client's own Steadfast API credentials (from steadfast-api plugin)
+        $api_key    = get_option('api_settings_tab_api_key', '');
+        $api_secret = get_option('api_settings_tab_api_secret_key', '');
+
+        // Fallback: Try alternative option names that some setups use
+        if (empty($api_key)) {
+            $api_key = get_option('steadfast_api_key', '');
+        }
+        if (empty($api_secret)) {
+            $api_secret = get_option('steadfast_secret_key', '');
+        }
+
+        if (empty($api_key) || empty($api_secret)) {
+            return null; // No Steadfast credentials configured on this site
+        }
+
+        $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
+        if (empty($normalized)) return null;
+
+        $url = 'https://portal.packzy.com/api/v1/fraud_check/' . $normalized;
+
+        $response = wp_remote_get($url, [
+            'timeout' => 15,
+            'headers' => [
+                'content-type' => 'application/json',
+                'api-key'      => $api_key,
+                'secret-key'   => $api_secret,
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            error_log('Guardify Steadfast Direct Error: ' . $response->get_error_message());
+            return null;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if ($code === 429) {
+            error_log('Guardify Steadfast Rate Limit: ' . wp_remote_retrieve_body($response));
+            return null;
+        }
+
+        if ($code !== 200 || !is_array($body)) {
+            error_log('Guardify Steadfast Error: HTTP ' . $code);
+            return null;
+        }
+
+        // Check for 401 (unauthorized)
+        if (isset($body['status']) && (string) $body['status'] === '401') {
+            error_log('Guardify Steadfast Auth Error: Invalid API credentials');
+            return null;
+        }
+
+        $totalParcels   = intval($body['total_parcels'] ?? 0);
+        $totalDelivered = intval($body['total_delivered'] ?? 0);
+        $totalCancelled = intval($body['total_cancelled'] ?? 0);
+        $successRate    = $totalParcels > 0 ? round(($totalDelivered / $totalParcels) * 100, 2) : 0;
+        $cancelRate     = $totalParcels > 0 ? round(($totalCancelled / $totalParcels) * 100, 2) : 0;
+        $fraudReports   = is_array($body['total_fraud_reports'] ?? null) ? count($body['total_fraud_reports']) : 0;
+
+        return [
+            'provider'         => 'Steadfast',
+            'totalParcels'     => $totalParcels,
+            'totalDelivered'   => $totalDelivered,
+            'totalCancelled'   => $totalCancelled,
+            'fraudReports'     => $fraudReports,
+            'successRate'      => $successRate,
+            'cancellationRate' => $cancelRate,
+        ];
+    }
+
+    /**
+     * AJAX handler: Fetch courier data for a phone number.
+     *
+     * FLOW:
+     * 1. Call Steadfast DIRECTLY using client's own API credentials (no rate limit)
+     * 2. Call TansiqLabs API for Pathao data + scoring + DB caching
+     * 3. Merge both sources into a combined courier report
+     * 4. Cache in WP transient + order meta for instant future renders
      */
     public function ajax_refresh_courier(): void {
         check_ajax_referer('guardify_ajax_nonce', 'nonce');
@@ -340,25 +446,55 @@ class Guardify_Fraud_Check {
 
         $order_id = intval($_POST['order_id'] ?? 0);
 
-        $result = $this->fetch_fraud_score($phone);
-        if (!$result || empty($result['success'])) {
-            wp_send_json_error(['message' => 'Failed to fetch fraud data']);
+        // Source 1: Fetch Steadfast data DIRECTLY using client's own API credentials
+        $steadfast = $this->fetch_local_steadfast_data($phone);
+
+        // Source 2: Fetch from TansiqLabs API (Pathao + scoring + DB cache)
+        // Pass steadfast_data so TansiqLabs can cache it and skip its own Steadfast call
+        $result = $this->fetch_fraud_score($phone, $steadfast);
+
+        // Build combined courier data
+        $sources = [];
+        if ($steadfast) {
+            $sources[] = $steadfast;
         }
 
-        // Cache courier data in WP transient (phone-keyed, 24h)
-        $courier = $result['courier'] ?? null;
-        if ($courier) {
-            $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
-            set_transient('guardify_courier_' . $normalized, $courier, DAY_IN_SECONDS);
-
-            // Also persist to order meta for instant rendering on next page load
-            if ($order_id > 0) {
-                $order = wc_get_order($order_id);
-                if ($order) {
-                    $order->update_meta_data('_guardify_courier_data', $courier);
-                    $order->update_meta_data('_guardify_courier_updated', current_time('mysql'));
-                    $order->save();
+        // Extract Pathao/other sources from TansiqLabs API response
+        if ($result && !empty($result['success'])) {
+            $api_sources = $result['courierSources'] ?? [];
+            foreach ($api_sources as $src) {
+                // Don't duplicate Steadfast if TansiqLabs also returned it
+                if (isset($src['provider']) && strtolower($src['provider']) === 'steadfast' && $steadfast) {
+                    continue;
                 }
+                $sources[] = $src;
+            }
+        }
+
+        // Aggregate totals across all sources
+        $courier = $this->aggregate_courier_sources($sources);
+
+        if (empty($courier) || $courier['totalParcels'] === 0) {
+            // Even with no data, return the empty result so the UI can show "No Data"
+            wp_send_json_success([
+                'courier' => $courier ?: ['totalParcels' => 0, 'totalDelivered' => 0, 'totalCancelled' => 0, 'successRate' => 0, 'cancellationRate' => 0, 'sources' => []],
+                'score'   => intval($result['score'] ?? 0),
+                'risk'    => $result['risk'] ?? 'low',
+            ]);
+            return;
+        }
+
+        // Cache courier data
+        $normalized = preg_replace('/\D/', '', preg_replace('/^(?:\+?88)/', '', $phone));
+        set_transient('guardify_courier_' . $normalized, $courier, DAY_IN_SECONDS);
+
+        // Persist to order meta for instant rendering on next page load
+        if ($order_id > 0) {
+            $order = wc_get_order($order_id);
+            if ($order) {
+                $order->update_meta_data('_guardify_courier_data', $courier);
+                $order->update_meta_data('_guardify_courier_updated', current_time('mysql'));
+                $order->save();
             }
         }
 
@@ -367,6 +503,55 @@ class Guardify_Fraud_Check {
             'score'   => intval($result['score'] ?? 0),
             'risk'    => $result['risk'] ?? 'low',
         ]);
+    }
+
+    /**
+     * Aggregate multiple courier sources into a combined report.
+     *
+     * @param array $sources Array of per-provider data
+     * @return array {totalParcels, totalDelivered, totalCancelled, successRate, cancellationRate, sources}
+     */
+    private function aggregate_courier_sources(array $sources): array {
+        $totalParcels = 0;
+        $totalDelivered = 0;
+        $totalCancelled = 0;
+        $totalFraud = 0;
+        $cleanSources = [];
+
+        foreach ($sources as $src) {
+            $p = intval($src['totalParcels'] ?? 0);
+            $d = intval($src['totalDelivered'] ?? 0);
+            $c = intval($src['totalCancelled'] ?? 0);
+            $f = intval($src['fraudReports'] ?? 0);
+
+            $totalParcels   += $p;
+            $totalDelivered += $d;
+            $totalCancelled += $c;
+            $totalFraud     += $f;
+
+            $cleanSources[] = [
+                'provider'         => $src['provider'] ?? 'Unknown',
+                'totalParcels'     => $p,
+                'totalDelivered'   => $d,
+                'totalCancelled'   => $c,
+                'fraudReports'     => $f,
+                'successRate'      => $p > 0 ? round(($d / $p) * 100, 2) : 0,
+                'cancellationRate' => $p > 0 ? round(($c / $p) * 100, 2) : 0,
+            ];
+        }
+
+        $successRate = $totalParcels > 0 ? round(($totalDelivered / $totalParcels) * 100, 2) : 0;
+        $cancelRate  = $totalParcels > 0 ? round(($totalCancelled / $totalParcels) * 100, 2) : 0;
+
+        return [
+            'totalParcels'     => $totalParcels,
+            'totalDelivered'   => $totalDelivered,
+            'totalCancelled'   => $totalCancelled,
+            'fraudReports'     => $totalFraud,
+            'successRate'      => $successRate,
+            'cancellationRate' => $cancelRate,
+            'sources'          => $cleanSources,
+        ];
     }
 
     /**
@@ -512,10 +697,23 @@ class Guardify_Fraud_Check {
                 continue;
             }
 
-            // Fetch from API (server has its own 6h courier cache, so this is fast)
-            $result = $this->fetch_fraud_score($phone);
-            if ($result && !empty($result['success']) && !empty($result['courier'])) {
-                $courier = $result['courier'];
+            // Fetch from Steadfast directly first, then TansiqLabs API
+            $steadfast = $this->fetch_local_steadfast_data($phone);
+            $result = $this->fetch_fraud_score($phone, $steadfast);
+
+            // Merge sources
+            $sources = [];
+            if ($steadfast) $sources[] = $steadfast;
+            if ($result && !empty($result['success'])) {
+                foreach (($result['courierSources'] ?? []) as $src) {
+                    if (isset($src['provider']) && strtolower($src['provider']) === 'steadfast' && $steadfast) continue;
+                    $sources[] = $src;
+                }
+            }
+
+            $courier = $this->aggregate_courier_sources($sources);
+
+            if (!empty($courier) && $courier['totalParcels'] > 0) {
                 set_transient('guardify_courier_' . $normalized, $courier, DAY_IN_SECONDS);
                 $results[$phone] = $courier;
             } else {
